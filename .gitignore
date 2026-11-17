@@ -10,3 +10,6 @@ __pycache__/
 dist/
 data/
 node_modules/
+transform/target/
+transform/logs/
+transform/.user.yml

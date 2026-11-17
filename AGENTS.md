@@ -27,6 +27,7 @@ docker compose up -d                      # Postgres (DBOS, LangGraph) + Jaeger 
 uv run --env-file .env uvicorn health_compass.api:app --reload
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials [--max-pages N]
 uv run python -m health_compass.ingest.clinicaltrials --accept-schema   # after a schema change
+uv run python -m health_compass.transform   # dbt build into data/health_compass.duckdb
 ```
 
 ## Architecture in one line
@@ -36,4 +37,6 @@ FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoin
 ## Gotchas
 - DBOS saves each step's result, including errors, and replays them. `resume` re-raises a
   failed step's error; `fork` from that step re-runs it.
+- Run dbt in its own process: in-process, DuckDB keeps small writes in the `.wal` file until the
+  connection closes, so swapping in the `.duckdb` file alone loses them.
 - Steps must raise errors that can be pickled; httpx's `HTTPStatusError` can't be loaded back.

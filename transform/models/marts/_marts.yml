@@ -1,0 +1,64 @@
+version: 2
+
+# Descriptions here are also what the agents read to write SQL, so keep them plain.
+models:
+  - name: trials
+    description: One row per recruiting trial on ClinicalTrials.gov.
+    columns:
+      - name: nct_id
+        description: ClinicalTrials.gov ID, e.g. NCT02102165. Link to https://clinicaltrials.gov/study/<nct_id>.
+        data_type: varchar
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique]
+      - { name: title, data_type: varchar }
+      - { name: summary, data_type: varchar, description: The sponsor's brief summary. }
+      - name: overall_status
+        data_type: varchar
+        data_tests: [{ accepted_values: { arguments: { values: [RECRUITING] } } }]
+      - { name: study_type, data_type: varchar, description: "INTERVENTIONAL, OBSERVATIONAL or EXPANDED_ACCESS." }
+      - { name: phases, data_type: "varchar[]", description: "e.g. [PHASE2, PHASE3]; NA for trials without phases." }
+      - { name: lead_sponsor, data_type: varchar }
+      - { name: lead_sponsor_class, data_type: varchar, description: "INDUSTRY, NIH, OTHER, ..." }
+      - { name: enrollment, data_type: integer, description: Planned or actual number of participants. }
+      - { name: start_date, data_type: varchar, description: "YYYY-MM or YYYY-MM-DD, as published." }
+      - { name: last_updated, data_type: date, description: When the record was last updated. }
+      - { name: sex, data_type: varchar, description: "Who can join: ALL, FEMALE or MALE." }
+      - { name: minimum_age, data_type: varchar, description: "e.g. '18 Years'; null when there is no limit." }
+      - { name: maximum_age, data_type: varchar }
+      - { name: healthy_volunteers, data_type: boolean }
+      - { name: eligibility_criteria, data_type: varchar, description: Inclusion and exclusion criteria, as free text. }
+
+  - name: trial_conditions
+    description: What each trial studies. A trial has a row per condition, from each source.
+    columns:
+      - name: nct_id
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('trials'), field: nct_id } } }]
+      - { name: condition, data_type: varchar, data_tests: [not_null] }
+      - name: source
+        description: "'reported' (the sponsor's words) or 'mesh' (ClinicalTrials.gov's standard term)."
+        data_type: varchar
+        data_tests: [{ accepted_values: { arguments: { values: [reported, mesh] } } }]
+
+  - name: trial_interventions
+    description: The drugs, devices, procedures, etc. each trial tests.
+    columns:
+      - name: nct_id
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('trials'), field: nct_id } } }]
+      - { name: intervention_type, data_type: varchar, description: "DRUG, DEVICE, BEHAVIORAL, ..." }
+      - { name: intervention_name, data_type: varchar }
+
+  - name: trial_sites
+    description: Where each trial runs. Use latitude and longitude to find trials near a place.
+    columns:
+      - name: nct_id
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('trials'), field: nct_id } } }]
+      - { name: facility, data_type: varchar }
+      - { name: city, data_type: varchar }
+      - { name: state, data_type: varchar }
+      - { name: country, data_type: varchar }
+      - { name: site_status, data_type: varchar, description: "This site's own status, e.g. RECRUITING or NOT_YET_RECRUITING." }
+      - { name: latitude, data_type: double, description: Null when ClinicalTrials.gov has no coordinates. }
+      - { name: longitude, data_type: double }

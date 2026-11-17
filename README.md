@@ -70,6 +70,22 @@ publishes new data about once a day. Running the command again:
   retyped fields stop the run. Update the dbt models, then run the command with
   `--accept-schema` and commit the new snapshot.
 
+### Build the trial tables
+
+```bash
+uv run python -m health_compass.transform
+```
+
+dbt reads the newest complete load (its `manifest.json` says `"complete": true`) and builds
+`data/health_compass.duckdb` with the tables `trials`, `trial_conditions`, `trial_interventions`
+and `trial_sites` (with latitude and longitude). Every model has an enforced contract (column
+names and types), and the build runs dbt's tests. It builds a new file and only swaps it in if
+everything passes, so a bad load never replaces good tables. Query them with
+`duckdb -readonly data/health_compass.duckdb`.
+
+Each build rebuilds every table from one complete load, which is a snapshot of all recruiting
+trials. So there are no incremental models: a trial that stops recruiting simply drops out.
+
 ## Roadmap
 
 1. Scaffold: tooling, CI, Docker Compose, OpenTelemetry and JSON logging

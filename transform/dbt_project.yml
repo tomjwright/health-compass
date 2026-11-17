@@ -1,0 +1,18 @@
+name: health_compass
+version: "0.1.0"
+config-version: 2
+profile: health_compass
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target"]
+
+vars:
+  raw_run_dir: "" # set by `python -m health_compass.transform`
+
+models:
+  health_compass:
+    # Every model declares its columns and types; a build fails if the SQL drifts from them.
+    +contract:
+      enforced: true
+    +materialized: table
