@@ -58,8 +58,8 @@ unchanged under `data/raw/clinicaltrials/<workflow id>/` (about 225 MB for all ~
 and `manifest.json` is written last.
 
 - **Crash:** run the same command again the same day. DBOS resumes the run at the next page.
-- **A page fails 3 times:** the run stops. Running the command again the same day forks the
-  run from that page, keeping the pages already saved.
+- **A page fails 3 times:** the run stops. Running the command again the same day starts a new
+  attempt (`...-attempt-2`) that carries on from that page, keeping the pages already saved.
 - **Schema change:** each run first compares the API's data model with
   `src/health_compass/ingest/clinicaltrials_schema.json`. New fields are logged. Removed or
   retyped fields stop the run. Update the dbt models, then run the command with

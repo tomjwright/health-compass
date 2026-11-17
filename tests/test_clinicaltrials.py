@@ -81,17 +81,30 @@ def test_failed_page_is_retried(api: FakeApi) -> None:
     assert run("run-1")["studies"] == 3
 
 
-def test_forked_run_skips_pages_already_saved(api: FakeApi, tmp_path: Path) -> None:
+def test_rerun_carries_on_from_the_failed_page_once(api: FakeApi, tmp_path: Path) -> None:
     api.failures_left = 3  # every attempt at page 2 fails, so the workflow stops
     with pytest.raises(Exception, match="save_page has exceeded its maximum of 3 retries"):
-        run("run-1")
-    failed_step = next(step for step in DBOS.list_workflow_steps("run-1") if step["error"])
+        clinicaltrials.run_today()
 
     api.failures_left = 0
-    manifest = DBOS.fork_workflow("run-1", failed_step["function_id"]).get_result()
-    assert manifest["studies"] == 3
-    assert len([url for url in api.requests if url.endswith("pageSize=1000")]) == 1
-    assert (tmp_path / "raw" / "clinicaltrials" / "run-1" / "manifest.json").exists()
+    assert clinicaltrials.run_today()["studies"] == 3
+    assert sum(url.endswith("pageSize=1000") for url in api.requests) == 1  # page 1 fetched once
+    run_dirs = [path.name for path in (tmp_path / "raw" / "clinicaltrials").iterdir()]
+    assert len(run_dirs) == 1
+    assert (tmp_path / "raw" / "clinicaltrials" / run_dirs[0] / "manifest.json").exists()
+
+    requests_after_success = len(api.requests)
+    clinicaltrials.run_today()
+    assert len(api.requests) == requests_after_success
+
+
+def test_rerun_after_schema_change_starts_over(api: FakeApi) -> None:
+    api.metadata = [{"name": "protocolSection", "sourceType": "TEXT", "type": "text"}]
+    with pytest.raises(clinicaltrials.SchemaChangeError):
+        clinicaltrials.run_today()
+
+    api.metadata = METADATA  # as if the snapshot had been accepted
+    assert clinicaltrials.run_today()["studies"] == 3
 
 
 def test_max_pages_must_be_at_least_one(monkeypatch: pytest.MonkeyPatch) -> None:

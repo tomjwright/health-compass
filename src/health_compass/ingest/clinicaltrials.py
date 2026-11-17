@@ -3,8 +3,8 @@
 Each API page is one DBOS step, saved unchanged (gzipped) under
 `$RAW_DATA_DIR/clinicaltrials/<workflow id>/`. If the process dies, re-running the same day's
 workflow skips the pages already saved and carries on from the next one. If a page failed every
-retry, re-running forks the workflow from that page. `manifest.json` is written last, so a run
-folder without one is incomplete.
+retry, re-running starts a new attempt that carries on from that page (see `run_today`).
+`manifest.json` is written last, so a run folder without one is incomplete.
 
     uv run --env-file .env python -m health_compass.ingest.clinicaltrials [--max-pages N]
 """
@@ -68,8 +68,11 @@ def save_page(run_dir: str, page: int, page_token: str | None) -> tuple[str | No
         params["pageToken"] = page_token
     with tracer.start_as_current_span("clinicaltrials.save_page", attributes={"page": page}):
         response = get("/studies", params)
-        Path(run_dir).mkdir(parents=True, exist_ok=True)
-        (Path(run_dir) / f"page-{page:05d}.json.gz").write_bytes(gzip.compress(response.content))
+        path = Path(run_dir) / f"page-{page:05d}.json.gz"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write then rename, so a crash mid-write never leaves a truncated page.
+        path.with_suffix(".tmp").write_bytes(gzip.compress(response.content))
+        path.with_suffix(".tmp").replace(path)
         body = response.json()
         log.info("saved page %d with %d studies", page, len(body["studies"]))
         return body.get("nextPageToken"), len(body["studies"])
@@ -123,6 +126,33 @@ def ingest_recruiting_trials(max_pages: int | None = None) -> dict[str, Any]:
         return manifest
 
 
+def run_today(max_pages: int | None = None) -> dict[str, Any]:
+    """Run today's load, or carry on from today's last failed attempt.
+
+    Attempts are `clinicaltrials-<date>`, then `...-attempt-2` and so on. Re-running after a crash
+    resumes the current attempt, and after a success returns its result without fetching again.
+    """
+    base_id = f"clinicaltrials-{date.today().isoformat()}"
+    if max_pages:
+        base_id += f"-{max_pages}-pages"
+    workflow_id, attempt, previous_id = base_id, 1, ""
+    while (status := DBOS.get_workflow_status(workflow_id)) and status.status == "ERROR":
+        previous_id, attempt = workflow_id, attempt + 1
+        workflow_id = f"{base_id}-attempt-{attempt}"
+    failed_steps = []
+    if previous_id and not status:
+        failed_steps = [step for step in DBOS.list_workflow_steps(previous_id) if step["error"]]
+    with SetWorkflowID(workflow_id):
+        if failed_steps:
+            # Fork from the failed page: the steps before it keep their saved results.
+            manifest: dict[str, Any] = DBOS.fork_workflow(
+                previous_id, failed_steps[0]["function_id"]
+            ).get_result()
+            return manifest
+        # Otherwise (first attempt, or a failure outside a step such as a schema change) start over.
+        return ingest_recruiting_trials(max_pages)
+
+
 def accept_schema() -> None:
     """Save the API's current data model as the new snapshot (after updating the dbt models)."""
     current = flatten(get("/studies/metadata").json())
@@ -144,18 +174,7 @@ def main() -> None:
     setup_tracing("health-compass-ingest")
     DBOS(config={"name": "health-compass", "system_database_url": os.environ["DATABASE_URL"]})
     DBOS.launch()
-    # One workflow per day: re-running after a crash resumes it instead of starting over.
-    workflow_id = f"clinicaltrials-{date.today().isoformat()}"
-    if args.max_pages:
-        workflow_id += f"-{args.max_pages}-pages"
-    status = DBOS.get_workflow_status(workflow_id)
-    if status and status.status == "ERROR":
-        # Failed steps are saved too, so re-run from the one that failed, keeping earlier pages.
-        failed = next(step for step in DBOS.list_workflow_steps(workflow_id) if step["error"])
-        DBOS.fork_workflow(workflow_id, failed["function_id"]).get_result()
-    else:
-        with SetWorkflowID(workflow_id):
-            ingest_recruiting_trials(args.max_pages)
+    run_today(args.max_pages)
     DBOS.destroy()
 
 
