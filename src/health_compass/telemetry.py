@@ -38,12 +38,11 @@ def setup_logging() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
-    # Uvicorn gives its own loggers separate plain-text handlers; send them through ours.
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        logger = logging.getLogger(name)
-        logger.handlers = []
-        logger.propagate = True
-        logger.setLevel(logging.NOTSET)
+    # Uvicorn sets up its own plain-text handlers before loading the app. Make them write JSON,
+    # but leave their levels and on/off settings (--log-level, --no-access-log) alone.
+    for name in ("uvicorn", "uvicorn.access"):
+        for uvicorn_handler in logging.getLogger(name).handlers:
+            uvicorn_handler.setFormatter(JsonFormatter())
 
 
 def setup_tracing(service_name: str) -> None:
