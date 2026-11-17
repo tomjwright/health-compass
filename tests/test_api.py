@@ -16,8 +16,8 @@ def dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
 
 
-def site(city: str, lat: float, lon: float) -> dict[str, object]:
-    return {"city": city, "country": "X", "geoPoint": {"lat": lat, "lon": lon}}
+def site(city: str, lat: float, lon: float, status: str = "RECRUITING") -> dict[str, object]:
+    return {"city": city, "country": "X", "status": status, "geoPoint": {"lat": lat, "lon": lon}}
 
 
 def trial(nct_id: str, *sites: dict[str, object]) -> dict[str, object]:
@@ -33,8 +33,13 @@ def test_health_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_finds_trials_nearest_first_with_stopped_ones_last() -> None:
-    near = trial("NCT00000011", site("Kuala Lumpur", 3.14, 101.69), site("Singapore", 1.29, 103.85))
+def test_finds_trials_at_their_nearest_recruiting_site_with_stopped_trials_last() -> None:
+    # Its Singapore site isn't recruiting yet, so the Kuala Lumpur site is shown.
+    near = trial(
+        "NCT00000011",
+        site("Kuala Lumpur", 3.14, 101.69),
+        site("Singapore", 1.29, 103.85, status="NOT_YET_RECRUITING"),
+    )
     far = trial("NCT00000012", site("London", 51.51, -0.13))
     stopped = trial("NCT00000013", site("Johor Bahru", 1.49, 103.74))
     no_longitude = trial("NCT00000014", {"city": "Somewhere", "geoPoint": {"lat": 1.3}})
@@ -48,13 +53,20 @@ def test_finds_trials_nearest_first_with_stopped_ones_last() -> None:
     body = response.json()
     assert body["data_as_of"] == "2026-11-17T00:00:00"
     found = [
-        (t["nct_id"], t["city"], t["is_recruiting"], t["overall_status"], t["distance_km"])
+        (
+            t["nct_id"],
+            t["is_recruiting"],
+            t["overall_status"],
+            t["city"],
+            t["site_status"],
+            t["distance_km"],
+        )
         for t in body["trials"]
     ]
     assert found == [
-        ("NCT00000011", "Singapore", True, "RECRUITING", 0.0),
-        ("NCT00000012", "London", True, "RECRUITING", 10855.5),
-        ("NCT00000013", "Johor Bahru", False, "COMPLETED", 25.4),
+        ("NCT00000011", True, "RECRUITING", "Kuala Lumpur", "RECRUITING", 316.1),
+        ("NCT00000012", True, "RECRUITING", "London", "RECRUITING", 10855.5),
+        ("NCT00000013", False, "COMPLETED", "Johor Bahru", "RECRUITING", 25.4),
     ]
 
 

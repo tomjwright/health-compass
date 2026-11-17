@@ -49,8 +49,9 @@ Traces show up in Jaeger at http://localhost:16686 (service `health-compass-api`
 ### Find trials
 
 Once the trial tables are built (see below), `POST /trials` finds trials for a condition, each at
-its site nearest the user. Recruiting trials come first, nearest first, then trials that have
-stopped recruiting (`is_recruiting: false`, with their `overall_status`). The search is a POST
+its nearest recruiting site (or its nearest site, if none is recruiting; `site_status` says
+which). Recruiting trials come first, nearest first, then trials that have stopped recruiting
+(`is_recruiting: false`, with their `overall_status`). The search is a POST
 body, so the condition and location stay out of URLs, logs and traces.
 
 ```bash
