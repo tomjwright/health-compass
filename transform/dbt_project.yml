@@ -8,9 +8,6 @@ macro-paths: ["macros"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
-vars:
-  raw_dir: "" # set by `python -m health_compass.transform`
-
 models:
   health_compass:
     staging:

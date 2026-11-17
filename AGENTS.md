@@ -32,7 +32,7 @@ uv run --env-file .env python -m health_compass.transform --full-refresh   # rep
 ```
 
 ## Architecture in one line
-Sources → DBOS ingestion workflows → raw JSON → dbt (DuckDB) → marts → LangGraph agents →
+Sources → DBOS ingestion workflows → raw JSON files → Python load into `raw` tables → dbt (DuckDB) → marts → LangGraph agents →
 FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoint in `.env`.
 
 ## Gotchas
@@ -40,8 +40,6 @@ FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoin
   failed step's error; `fork` from that step re-runs it.
 - Run dbt in its own process: in-process, DuckDB keeps small writes in the `.wal` file until the
   connection closes, so swapping in the `.duckdb` file alone loses them.
-- dbt-duckdb formats a source's `external_location` with `str.format` by default, so `{...}`
-  in DuckDB SQL breaks it: set `formatter: oldstyle`.
 - Staging is an append-only incremental model: after changing its columns or parsing, run the
   transform with `--full-refresh`, or old rows keep the old logic.
 - Readers (API, agents) open a read-only DuckDB connection per request and close it. A long-lived

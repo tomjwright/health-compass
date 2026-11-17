@@ -1,24 +1,10 @@
 version: 2
 
-# dbt-duckdb fills in external_location with str.format by default, which treats DuckDB's
-# {studies: 'JSON[]'} as a placeholder: `formatter: oldstyle` turns that off.
 sources:
-  - name: clinicaltrials
-    description: Raw ClinicalTrials.gov API responses, exactly as the ingestion saved them, one folder per load.
+  - name: raw
+    description: Raw ClinicalTrials.gov data, loaded unchanged by `health_compass.load`.
     tables:
-      - name: loads
-        description: One row per load, from its manifest.json; `complete` is true once every page was saved.
-        config:
-          meta:
-            formatter: oldstyle
-            external_location: >-
-              read_json('{{ var("raw_dir") }}/*/manifest.json', filename = true,
-              columns = {data_timestamp: 'VARCHAR', mode: 'VARCHAR', since: 'VARCHAR', complete: 'BOOLEAN'})
-      - name: study_pages
-        description: One row per page of every load; `studies` holds up to 1,000 trials.
-        config:
-          meta:
-            formatter: oldstyle
-            external_location: >-
-              read_json('{{ var("raw_dir") }}/*/page-*.json.gz', filename = true,
-              columns = {studies: 'JSON[]'}, maximum_object_size = 200000000)
+      - name: clinicaltrials_loads
+        description: One row per complete load, from its manifest.json.
+      - name: clinicaltrials_studies
+        description: One row per trial per load, the trial's JSON exactly as the API returned it.
