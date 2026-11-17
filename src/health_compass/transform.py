@@ -52,7 +52,9 @@ def build() -> None:
     new = live.with_name(live.name + ".new")
     new.unlink(missing_ok=True)  # left over from a failed build
     live.parent.mkdir(parents=True, exist_ok=True)
-    if not (TRANSFORM_DIR / "dbt_packages").exists() and not dbt("deps"):
+    # A failed `dbt deps` can leave the folder behind, so check for the package itself.
+    installed = (TRANSFORM_DIR / "dbt_packages/dbt_utils/dbt_project.yml").exists()
+    if not installed and not dbt("deps"):
         raise SystemExit("dbt deps failed: could not install dbt_utils (see package-lock.yml).")
     with tracer.start_as_current_span("dbt.build", attributes={"load": load.name}):
         log.info("building %s from %s", live, load)
