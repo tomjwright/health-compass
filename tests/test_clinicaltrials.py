@@ -23,6 +23,7 @@ class FakeApi:
     def __init__(self) -> None:
         self.metadata = METADATA
         self.failures_left = 0
+        self.version_failures_left = 0
         self.version = VERSION
         self.requests: list[str] = []
 
@@ -31,6 +32,9 @@ class FakeApi:
         if request.url.path.endswith("/metadata"):
             return httpx.Response(200, json=self.metadata)
         if request.url.path.endswith("/version"):
+            if self.version_failures_left:
+                self.version_failures_left -= 1
+                return httpx.Response(503)
             return httpx.Response(200, json=self.version)
         cursor = request.url.params.get("pageToken")
         if cursor == "p2" and self.failures_left:
@@ -81,6 +85,11 @@ def test_same_workflow_id_does_not_fetch_again(api: FakeApi) -> None:
 def test_failed_page_is_retried(api: FakeApi) -> None:
     api.failures_left = 1
     assert run("run-1")["studies"] == 3
+
+
+def test_failed_version_request_is_retried(api: FakeApi) -> None:
+    api.version_failures_left = 1
+    assert clinicaltrials.run_load()["data_timestamp"] == VERSION["dataTimestamp"]
 
 
 def test_rerun_carries_on_from_the_failed_page_once(api: FakeApi, tmp_path: Path) -> None:

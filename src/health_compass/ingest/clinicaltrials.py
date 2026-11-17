@@ -13,6 +13,7 @@ import gzip
 import json
 import logging
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -126,6 +127,17 @@ def ingest_recruiting_trials(
         return manifest
 
 
+def current_version() -> Any:
+    """Read the data's version. This runs before any workflow, so it retries by itself."""
+    for wait in (1, 2):
+        try:
+            return get("/version").json()
+        except (RuntimeError, httpx.TransportError):
+            log.warning("GET /version failed, retrying in %ds", wait)
+            time.sleep(wait)
+    return get("/version").json()
+
+
 def run_load(max_pages: int | None = None) -> dict[str, Any]:
     """Load the data ClinicalTrials.gov currently publishes, or carry on loading it.
 
@@ -133,7 +145,7 @@ def run_load(max_pages: int | None = None) -> dict[str, Any]:
     `...-attempt-2` and so on after failures. Re-running after a crash resumes the current
     attempt, and after a success returns its result until newer data is published.
     """
-    version = get("/version").json()
+    version = current_version()
     base_id = f"clinicaltrials-{version['dataTimestamp']}"
     if max_pages:
         base_id += f"-{max_pages}-pages"
