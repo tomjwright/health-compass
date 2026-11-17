@@ -28,6 +28,7 @@ uv run --env-file .env uvicorn health_compass.api:app --reload
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials [--max-pages N]
 uv run python -m health_compass.ingest.clinicaltrials --accept-schema   # after a schema change
 uv run --env-file .env python -m health_compass.transform   # dbt build into data/health_compass.duckdb
+uv run --env-file .env python -m health_compass.transform --full-refresh   # replay every raw load
 ```
 
 ## Architecture in one line
@@ -41,4 +42,10 @@ FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoin
   connection closes, so swapping in the `.duckdb` file alone loses them.
 - dbt-duckdb formats a source's `external_location` with `str.format` by default, so `{...}`
   in DuckDB SQL breaks it: set `formatter: oldstyle`.
+- Staging is an append-only incremental model: after changing its columns or parsing, run the
+  transform with `--full-refresh`, or old rows keep the old logic.
+- Keep the staging filter on the load folder a constant list (`in ('...')`): DuckDB then skips
+  every other load's files. A join or subquery on `filename` makes it read them all.
+- Readers (API, agents) open a read-only DuckDB connection per request and close it. A long-lived
+  connection keeps reading the old file after a build swaps in a new one.
 - Steps must raise errors that can be pickled; httpx's `HTTPStatusError` can't be loaded back.

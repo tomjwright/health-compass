@@ -1,6 +1,6 @@
 {% set location = ['facility', 'city', 'state', 'country', 'latitude', 'longitude'] %}
 select
-    {{ dbt_utils.generate_surrogate_key(['nct_id']) }} as trial_key,
+    trial_key,
     {{ dbt_utils.generate_surrogate_key(location) }} as location_key,
     {{ dbt_utils.generate_surrogate_key(['lead_sponsor', 'lead_sponsor_class']) }} as sponsor_key,
     -- A site listed twice counts as recruiting if either listing is.

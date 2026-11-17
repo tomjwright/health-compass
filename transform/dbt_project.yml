@@ -9,13 +9,13 @@ target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
 vars:
-  raw_run_dir: "" # set by `python -m health_compass.transform`
+  raw_dir: "" # set by `python -m health_compass.transform`
 
 models:
   health_compass:
     staging:
       +schema: staging
-      # A table, not the usual view: it parses ~225 MB of gzipped JSON once, not once per model.
+      # Tables, not the usual views: the raw JSON is parsed once, not once per model.
       +materialized: table
       +contract: { enforced: true }
     intermediate:
