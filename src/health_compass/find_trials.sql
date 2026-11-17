@@ -36,7 +36,7 @@ select
     round(distance_km, 1) as distance_km
 from sites
 qualify row_number() over (
-    partition by nct_id order by site_status = 'RECRUITING' desc nulls last, distance_km
+    partition by nct_id order by coalesce(site_status = 'RECRUITING', false) desc, distance_km
 ) = 1
 order by is_recruiting desc, distance_km, nct_id
 limit $limit

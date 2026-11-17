@@ -16,7 +16,7 @@ def dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
 
 
-def site(city: str, lat: float, lon: float, status: str = "RECRUITING") -> dict[str, object]:
+def site(city: str, lat: float, lon: float, status: str | None = "RECRUITING") -> dict[str, object]:
     return {"city": city, "country": "X", "status": status, "geoPoint": {"lat": lat, "lon": lon}}
 
 
@@ -41,7 +41,12 @@ def test_finds_trials_at_their_nearest_recruiting_site_with_stopped_trials_last(
         site("Singapore", 1.29, 103.85, status="NOT_YET_RECRUITING"),
     )
     far = trial("NCT00000012", site("London", 51.51, -0.13))
-    stopped = trial("NCT00000013", site("Johor Bahru", 1.49, 103.74))
+    # No site is recruiting, so its nearest site is shown, even with no status.
+    stopped = trial(
+        "NCT00000013",
+        site("Johor Bahru", 1.49, 103.74, status=None),
+        site("Bangkok", 13.75, 100.5, status="COMPLETED"),
+    )
     no_longitude = trial("NCT00000014", {"city": "Somewhere", "geoPoint": {"lat": 1.3}})
     save_load("2026-11-16", [near, far, stopped, no_longitude, BARE_STUDY])
     save_load("2026-11-17", [updated(stopped, "COMPLETED", "2026-11-17")])
@@ -66,7 +71,7 @@ def test_finds_trials_at_their_nearest_recruiting_site_with_stopped_trials_last(
     assert found == [
         ("NCT00000011", True, "RECRUITING", "Kuala Lumpur", "RECRUITING", 316.1),
         ("NCT00000012", True, "RECRUITING", "London", "RECRUITING", 10855.5),
-        ("NCT00000013", False, "COMPLETED", "Johor Bahru", "RECRUITING", 25.4),
+        ("NCT00000013", False, "COMPLETED", "Johor Bahru", None, 25.4),
     ]
 
 
