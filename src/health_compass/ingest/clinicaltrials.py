@@ -1,4 +1,7 @@
-"""Land every recruiting trial from ClinicalTrials.gov as raw JSON, as a durable DBOS workflow.
+"""Land ClinicalTrials.gov trials as raw JSON, as a durable DBOS workflow.
+
+The first load fetches every recruiting trial. Each later load fetches only the trials updated
+since the last complete load, in any status, so we see trials that stop recruiting.
 
 Each API page is one DBOS step, saved unchanged (gzipped) under
 `$RAW_DATA_DIR/clinicaltrials/<workflow id>/`. A run is named after the version of the data it
@@ -14,7 +17,7 @@ import json
 import logging
 import os
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -63,9 +66,17 @@ def fetch_json(path: str) -> Any:
 
 
 @DBOS.step(retries_allowed=True, max_attempts=MAX_ATTEMPTS)
-def save_page(run_dir: str, page: int, page_token: str | None) -> tuple[str | None, int]:
-    """Fetch one page of recruiting trials and save it unchanged. Returns (next token, count)."""
-    params: dict[str, str | int] = {"filter.overallStatus": "RECRUITING", "pageSize": PAGE_SIZE}
+def save_page(
+    run_dir: str, page: int, page_token: str | None, since: str | None
+) -> tuple[str | None, int]:
+    """Fetch one page of trials and save it unchanged. Returns (next token, count).
+
+    Without `since`, the page holds recruiting trials; with it, trials updated on or after it.
+    """
+    params: dict[str, str | int] = {"filter.overallStatus": "RECRUITING"}
+    if since:
+        params = {"filter.advanced": f"AREA[LastUpdatePostDate]RANGE[{since},MAX]"}
+    params["pageSize"] = PAGE_SIZE
     if page_token:
         params["pageToken"] = page_token
     with tracer.start_as_current_span("clinicaltrials.save_page", attributes={"page": page}):
@@ -88,7 +99,10 @@ def start_run() -> tuple[str, str]:
 
 @DBOS.step()
 def write_manifest(run_dir: str, manifest: dict[str, Any]) -> None:
-    (Path(run_dir) / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    # Written to a temporary file, then renamed, so a crash never leaves half a manifest.
+    path = Path(run_dir) / "manifest.json"
+    path.with_suffix(".tmp").write_text(json.dumps(manifest, indent=2))
+    path.with_suffix(".tmp").replace(path)
 
 
 def check_schema() -> None:
@@ -102,8 +116,8 @@ def check_schema() -> None:
 
 
 @DBOS.workflow()
-def ingest_recruiting_trials(
-    version: dict[str, str], max_pages: int | None = None
+def ingest_trials(
+    version: dict[str, str], since: str | None = None, max_pages: int | None = None
 ) -> dict[str, Any]:
     with tracer.start_as_current_span("clinicaltrials.ingest"):
         check_schema()
@@ -111,7 +125,7 @@ def ingest_recruiting_trials(
         page, studies, token = 0, 0, None
         while True:
             page += 1
-            token, count = save_page(run_dir, page, token)
+            token, count = save_page(run_dir, page, token, since)
             studies += count
             if token is None or page == max_pages:
                 break
@@ -120,12 +134,14 @@ def ingest_recruiting_trials(
             "loaded_at": started_at,
             "api_version": version["apiVersion"],
             "data_timestamp": version["dataTimestamp"],
+            "mode": "incremental" if since else "full",
+            "since": since,
             "pages": page,
             "studies": studies,
             "complete": token is None,
         }
         write_manifest(run_dir, manifest)
-        log.info("ingested %d recruiting trials in %d pages", studies, page)
+        log.info("ingested %d trials in %d pages (since %s)", studies, page, since)
         return manifest
 
 
@@ -142,6 +158,15 @@ def current_version() -> Any:
             log.warning("GET /version failed (attempt %d of %d)", attempt, MAX_ATTEMPTS)
             time.sleep(attempt)
     return get("/version").json()  # the last attempt: if this fails too, its error stops the run
+
+
+def updated_since() -> str | None:
+    """The day before the last complete load's data date (a day of overlap), or None if none."""
+    manifests = [json.loads(path.read_text()) for path in raw_dir().glob("*/manifest.json")]
+    last = max((m["data_timestamp"] for m in manifests if m["complete"]), default=None)
+    if last is None:
+        return None
+    return (datetime.fromisoformat(last) - timedelta(days=1)).date().isoformat()
 
 
 def run_load(max_pages: int | None = None) -> dict[str, Any]:
@@ -170,7 +195,7 @@ def run_load(max_pages: int | None = None) -> dict[str, Any]:
             ).get_result()
             return manifest
         # Otherwise (first attempt, or a failure outside a step such as a schema change) start over.
-        return ingest_recruiting_trials(version, max_pages)
+        return ingest_trials(version, updated_since(), max_pages)
 
 
 def accept_schema() -> None:

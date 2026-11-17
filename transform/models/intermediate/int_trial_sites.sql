@@ -1,6 +1,6 @@
 -- One row per site a trial lists. Some trials list a site twice, with different statuses.
 select
-    nct_id,
+    trial_key,
     lead_sponsor,
     lead_sponsor_class,
     site ->> 'facility' as facility,
@@ -10,4 +10,5 @@ select
     cast(site ->> '$.geoPoint.lat' as double) as latitude,
     cast(site ->> '$.geoPoint.lon' as double) as longitude,
     site ->> 'status' as site_status
-from {{ ref('stg_clinicaltrials__studies') }}, unnest(locations) as t (site)
+from {{ ref('int_trial_versions') }}, unnest(locations) as t (site)
+where is_current

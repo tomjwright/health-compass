@@ -62,7 +62,7 @@ def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[FakeApi]:
 
 def run(workflow_id: str) -> dict[str, object]:
     with SetWorkflowID(workflow_id):
-        return clinicaltrials.ingest_recruiting_trials(VERSION)
+        return clinicaltrials.ingest_trials(VERSION)
 
 
 def test_saves_every_page_unchanged_then_the_manifest(api: FakeApi, tmp_path: Path) -> None:
@@ -117,6 +117,19 @@ def test_rerun_loads_again_only_when_newer_data_is_published(api: FakeApi) -> No
     second = clinicaltrials.run_load()
     assert second["workflow_id"] == "clinicaltrials-2026-11-17T10:00:05"
     assert second["data_timestamp"] == "2026-11-17T10:00:05"
+
+
+def test_first_load_is_full_and_later_loads_only_fetch_updates(api: FakeApi) -> None:
+    first = clinicaltrials.run_load()
+    assert (first["mode"], first["since"]) == ("full", None)
+    assert "filter.overallStatus=RECRUITING" in api.requests[-1]
+
+    api.version = {"apiVersion": "2.0.5", "dataTimestamp": "2026-11-17T10:00:05"}
+    second = clinicaltrials.run_load()
+    assert (second["mode"], second["since"]) == ("incremental", "2026-11-15")
+    updated_since = "filter.advanced=AREA%5BLastUpdatePostDate%5DRANGE%5B2026-11-15%2CMAX%5D"
+    assert updated_since in api.requests[-1]
+    assert "overallStatus" not in api.requests[-1]
 
 
 def test_rerun_after_schema_change_starts_over(api: FakeApi) -> None:

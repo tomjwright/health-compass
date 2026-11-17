@@ -1,5 +1,6 @@
+-- SCD type 2: one row per version of a trial. Filter on is_current for each trial as it is now.
 select
-    {{ dbt_utils.generate_surrogate_key(['nct_id']) }} as trial_key,
+    trial_key,
     nct_id,
     title,
     summary,
@@ -12,5 +13,8 @@ select
     minimum_age,
     maximum_age,
     healthy_volunteers,
-    eligibility_criteria
-from {{ ref('stg_clinicaltrials__studies') }}
+    eligibility_criteria,
+    valid_from,
+    valid_to,
+    is_current
+from {{ ref('int_trial_versions') }}

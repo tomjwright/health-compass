@@ -1,9 +1,19 @@
 version: 2
 
 models:
-  - name: stg_clinicaltrials__studies
-    description: One row per trial in the load, with the fields the marts use, renamed and typed.
+  - name: stg_clinicaltrials__loads
+    description: One row per complete load.
     columns:
+      - { name: load_id, data_type: varchar, constraints: [{ type: not_null }], data_tests: [unique] }
+      - { name: data_timestamp, data_type: timestamp, description: When ClinicalTrials.gov published the data. }
+      - { name: mode, data_type: varchar, data_tests: [{ accepted_values: { arguments: { values: [full, incremental] } } }] }
+      - { name: since, data_type: date, description: "Incremental loads: trials updated on or after this day." }
+
+  - name: stg_clinicaltrials__studies
+    description: One row per trial per load (append-only), with the fields the marts use, renamed and typed.
+    columns:
+      - { name: load_id, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: data_timestamp, data_type: timestamp }
       - { name: nct_id, data_type: varchar, constraints: [{ type: not_null }] }
       - { name: title, data_type: varchar }
       - { name: summary, data_type: varchar }
@@ -14,7 +24,7 @@ models:
       - { name: lead_sponsor_class, data_type: varchar }
       - { name: enrollment, data_type: integer }
       - { name: start_date, data_type: varchar }
-      - { name: last_updated, data_type: date }
+      - { name: last_updated, data_type: date, constraints: [{ type: not_null }] }
       - { name: sex, data_type: varchar }
       - { name: minimum_age, data_type: varchar }
       - { name: maximum_age, data_type: varchar }

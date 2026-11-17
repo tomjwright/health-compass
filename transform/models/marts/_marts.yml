@@ -4,7 +4,9 @@ version: 2
 # columns. Descriptions here are also what the agents read to write SQL, so keep them plain.
 models:
   - name: dim_trials
-    description: One row per trial on ClinicalTrials.gov.
+    description: >-
+      One row per version of a trial (SCD type 2): a new version starts each time ClinicalTrials.gov
+      updates the trial. Use is_current = true for each trial as it is now.
     columns:
       - name: trial_key
         data_type: varchar
@@ -14,7 +16,7 @@ models:
         description: ClinicalTrials.gov ID, e.g. NCT02102165. Link to https://clinicaltrials.gov/study/<nct_id>.
         data_type: varchar
         constraints: [{ type: not_null }]
-        data_tests: [unique]
+        data_tests: [{ unique: { config: { where: is_current } } }]
       - { name: title, data_type: varchar }
       - { name: summary, data_type: varchar, description: The sponsor's brief summary. }
       - name: overall_status
@@ -37,6 +39,9 @@ models:
       - { name: maximum_age, data_type: varchar }
       - { name: healthy_volunteers, data_type: boolean }
       - { name: eligibility_criteria, data_type: varchar, description: Inclusion and exclusion criteria, as free text. }
+      - { name: valid_from, data_type: date, description: The day this version was posted., constraints: [{ type: not_null }] }
+      - { name: valid_to, data_type: date, description: The day the next version was posted; null for the current one. }
+      - { name: is_current, data_type: boolean, constraints: [{ type: not_null }] }
 
   - name: dim_sponsors
     description: One row per lead sponsor.
@@ -129,7 +134,7 @@ models:
       - { name: day_name, data_type: varchar }
 
   - name: fct_trials
-    description: One row per trial, with its planned size. Join to dim_trials for its details.
+    description: One row per trial, with its planned size. Its trial_key is the trial's current version.
     columns:
       - name: trial_key
         data_type: varchar
@@ -162,3 +167,17 @@ models:
       - name: site_status
         description: "This site's own status, e.g. RECRUITING or NOT_YET_RECRUITING; it can differ from the trial's."
         data_type: varchar
+
+  - name: fct_trial_status_changes
+    description: One row each time a trial's overall status changed, e.g. from RECRUITING to COMPLETED.
+    columns:
+      - name: trial_key
+        description: The version with the new status.
+        data_type: varchar
+        data_tests: [not_null, unique, { relationships: { arguments: { to: ref('dim_trials'), field: trial_key } } }]
+      - name: changed_on
+        description: The day the version with the new status was posted.
+        data_type: date
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_dates'), field: date_day } } }]
+      - { name: from_status, data_type: varchar, data_tests: [not_null] }
+      - { name: to_status, data_type: varchar, data_tests: [not_null] }

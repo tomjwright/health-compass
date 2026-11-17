@@ -49,13 +49,20 @@ Traces show up in Jaeger at http://localhost:16686 (service `health-compass-api`
 ### Load trials
 
 ```bash
-uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials
+uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # first run: all recruiting trials
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials --max-pages 2   # quick run
 ```
 
 This is a DBOS workflow, saved step by step in Postgres. Each page of 1,000 trials is saved
-unchanged under `data/raw/clinicaltrials/<workflow id>/` (about 225 MB for all ~65,000),
-and `manifest.json` is written last.
+unchanged under `data/raw/clinicaltrials/<workflow id>/`, and `manifest.json` is written last.
+
+- **First run (`"mode": "full"`):** every recruiting trial, about 65,000 in 66 pages (225 MB).
+- **Every later run (`"mode": "incremental"`):** only the trials updated since the day before the
+  last complete load (`"since"`), in any status, so we see trials that stop recruiting. That's
+  about 1,000 trials in 1–2 pages a day. The day of overlap means a late update is never missed;
+  dbt drops the duplicates.
+
+Every load is kept: together they are the history that dbt replays.
 
 Each run is named after the version of the data it loads (`dataTimestamp` from the API's
 `/version`, e.g. `clinicaltrials-2026-11-16T10:00:05`), not the time it runs. ClinicalTrials.gov
@@ -76,18 +83,21 @@ publishes new data about once a day. Running the command again:
 uv run --env-file .env python -m health_compass.transform
 ```
 
-dbt reads the newest complete load (its `manifest.json` says `"complete": true`) and builds
+dbt reads the complete loads (their `manifest.json` says `"complete": true`) and builds
 `data/health_compass.duckdb` in three layers:
 
-- `staging`: one row per trial, the raw JSON renamed and typed (read as a dbt source).
-- `intermediate`: views that unnest each trial's conditions, interventions and sites.
-- `marts`: a star schema for the API and agents.
+- `staging`: append-only, one row per trial per load, the raw JSON renamed and typed (read as a
+  dbt source). Each build adds only the loads it hasn't seen yet.
+- `intermediate`: `int_trial_versions` keeps one row per version of a trial, then views unnest
+  the current version's conditions, interventions and sites.
+- `marts`: a star schema for the API and agents, rebuilt from staging on every build.
 
 | Table | One row per |
 |---|---|
 | `fct_trial_sites` | trial per site: the starting point for "trials near me" |
 | `fct_trials` | trial, with its enrollment and last-update date |
-| `dim_trials` | trial: title, phase, eligibility, `overall_status`, `is_recruiting` |
+| `fct_trial_status_changes` | change in a trial's status, e.g. `RECRUITING` to `COMPLETED` |
+| `dim_trials` | version of a trial (SCD type 2): title, phase, eligibility, `overall_status`, `is_recruiting`, `valid_from`, `valid_to`, `is_current` |
 | `dim_locations` | site: facility, city, country, latitude and longitude |
 | `dim_conditions` + `bridge_trial_conditions` | condition, as the sponsor wrote it or as a MeSH term |
 | `dim_interventions` + `bridge_trial_interventions` | drug, device, procedure, ... |
@@ -96,7 +106,8 @@ dbt reads the newest complete load (its `manifest.json` says `"complete": true`)
 Facts and bridges join to dimensions on `*_key` columns (hashes made by `dbt_utils`). Staging and
 marts have enforced contracts (column names and types), and the build runs dbt's tests: unique
 keys, and every key in a fact or bridge exists in its dimension. It builds a new file and only
-swaps it in if everything passes, so a bad load never replaces good tables. Query them with
+swaps it in if everything passes, so a bad load never replaces good tables. Because staging
+keeps its rows from earlier builds, the new file starts as a copy of the live one. Query them with
 `duckdb -readonly data/health_compass.duckdb`, e.g. alopecia trials by distance from Singapore:
 
 ```sql
@@ -114,8 +125,15 @@ order by (l.latitude - 1.29) ^ 2 + (l.longitude - 103.85) ^ 2
 limit 3;
 ```
 
-For now each build rebuilds every table from one complete load, a snapshot of all recruiting
-trials. Incremental loads, with a history of each trial's status, are next.
+**Trial history.** A new version of a trial starts each time ClinicalTrials.gov posts an update
+(`last_updated` changes). The previous version gets `valid_to` set to that day. Use
+`is_current` for each trial as it is now. The facts, bridges and sites point at current versions.
+The tables hold every trial that was recruiting in some load. A trial that stops recruiting stays,
+with `is_recruiting = false` and its new `overall_status`, so the app can show it as "Not
+recruiting: Completed". Trials we never saw recruiting are left out.
+
+**Rebuild from scratch.** `python -m health_compass.transform --full-refresh` starts from an empty
+file and replays every raw load. Use it after changing staging, or if the DuckDB file is lost.
 
 ## Roadmap
 
