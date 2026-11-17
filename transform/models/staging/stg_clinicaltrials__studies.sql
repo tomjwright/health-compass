@@ -1,22 +1,17 @@
 {{ config(materialized='incremental', incremental_strategy='append', on_schema_change='append_new_columns') }}
 
--- Append-only: one row per trial per load. Each build parses only the loads not in this table
--- yet; filtering on the folder name in the file path lets DuckDB skip every other load's files.
-{% set new_loads_query %}
-    select load_id from {{ ref('stg_clinicaltrials__loads') }}
-    {% if is_incremental() %} where load_id not in (select load_id from {{ this }}) {% endif %}
-{% endset %}
-{% set new_loads = run_query(new_loads_query).columns[0].values() if execute else [] %}
-
+-- Append-only: one row per trial per load. Each build adds only the loads not in this table yet.
 with pages as (
     select regexp_extract(filename, '([^/]+)/[^/]+$', 1) as load_id, studies
     from {{ source('clinicaltrials', 'study_pages') }}
-    where regexp_extract(filename, '([^/]+)/[^/]+$', 1) in ('{{ new_loads | join("', '") }}')
 ),
 
 studies as (
     select load_id, unnest(studies) as study
     from pages
+    {% if is_incremental() %}
+    where load_id not in (select load_id from {{ this }})
+    {% endif %}
 ),
 
 sections as (

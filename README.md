@@ -87,7 +87,7 @@ dbt reads the complete loads (their `manifest.json` says `"complete": true`) and
 `data/health_compass.duckdb` in three layers:
 
 - `staging`: append-only, one row per trial per load, the raw JSON renamed and typed (read as a
-  dbt source). Each build parses only the loads it hasn't seen yet.
+  dbt source). Each build adds only the loads it hasn't seen yet.
 - `intermediate`: `int_trial_versions` keeps one row per version of a trial, then views unnest
   the current version's conditions, interventions and sites.
 - `marts`: a star schema for the API and agents, rebuilt from staging on every build.

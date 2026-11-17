@@ -44,8 +44,6 @@ FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoin
   in DuckDB SQL breaks it: set `formatter: oldstyle`.
 - Staging is an append-only incremental model: after changing its columns or parsing, run the
   transform with `--full-refresh`, or old rows keep the old logic.
-- Keep the staging filter on the load folder a constant list (`in ('...')`): DuckDB then skips
-  every other load's files. A join or subquery on `filename` makes it read them all.
 - Readers (API, agents) open a read-only DuckDB connection per request and close it. A long-lived
   connection keeps reading the old file after a build swaps in a new one.
 - Steps must raise errors that can be pickled; httpx's `HTTPStatusError` can't be loaded back.
