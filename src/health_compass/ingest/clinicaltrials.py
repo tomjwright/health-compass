@@ -99,7 +99,10 @@ def start_run() -> tuple[str, str]:
 
 @DBOS.step()
 def write_manifest(run_dir: str, manifest: dict[str, Any]) -> None:
-    (Path(run_dir) / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    # Written to a temporary file, then renamed, so a crash never leaves half a manifest.
+    path = Path(run_dir) / "manifest.json"
+    path.with_suffix(".tmp").write_text(json.dumps(manifest, indent=2))
+    path.with_suffix(".tmp").replace(path)
 
 
 def check_schema() -> None:
