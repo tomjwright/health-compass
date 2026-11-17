@@ -63,27 +63,31 @@ def dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
 
 
-def test_builds_the_trial_tables_from_the_latest_complete_load() -> None:
+def test_builds_the_star_schema_from_the_latest_complete_load() -> None:
     save_load("2026-11-15", [BARE_STUDY])
     save_load("2026-11-16", [FULL_STUDY, BARE_STUDY])
     save_load("2026-11-17", [BARE_STUDY], complete=False)  # a --max-pages run: skipped
     transform.build()
 
-    assert query("select nct_id, phases, start_date, enrollment from trials order by 1") == [
-        ("NCT00000001", ["PHASE2", "PHASE3"], "2025-04", 120),
-        ("NCT00000002", None, None, None),
+    assert query(
+        "select nct_id, phases, start_date, is_recruiting, enrollment"
+        " from marts.fct_trials join marts.dim_trials using (trial_key) order by 1"
+    ) == [
+        ("NCT00000001", ["PHASE2", "PHASE3"], "2025-04", True, 120),
+        ("NCT00000002", None, None, True, None),
     ]
-    assert query("select condition, source from trial_conditions order by 2") == [
-        ("Alopecia", "mesh"),
-        ("Hair Loss", "reported"),
-    ]
-    assert query("select intervention_type, intervention_name from trial_interventions") == [
-        ("DRUG", "Minoxidil")
-    ]
-    assert query("select city, latitude, longitude from trial_sites order by 1") == [
-        ("Nowhere", None, None),
-        ("Singapore", 1.29, 103.85),
-    ]
+    assert query(
+        "select condition_name, vocabulary, mesh_id from marts.bridge_trial_conditions"
+        " join marts.dim_conditions using (condition_key) order by 2"
+    ) == [("Alopecia", "mesh", "D000505"), ("Hair Loss", "reported", None)]
+    assert query(
+        "select intervention_type, intervention_name from marts.bridge_trial_interventions"
+        " join marts.dim_interventions using (intervention_key)"
+    ) == [("DRUG", "Minoxidil")]
+    assert query(
+        "select city, latitude, longitude from marts.fct_trial_sites"
+        " join marts.dim_locations using (location_key) order by 1"
+    ) == [("Nowhere", None, None), ("Singapore", 1.29, 103.85)]
 
 
 def test_failed_build_leaves_the_live_database_alone() -> None:
@@ -94,7 +98,7 @@ def test_failed_build_leaves_the_live_database_alone() -> None:
     save_load("2026-11-17", [FULL_STUDY, no_id])
     with pytest.raises(SystemExit, match="dbt build failed"):
         transform.build()
-    assert query("select nct_id from trials") == [("NCT00000001",)]
+    assert query("select nct_id from marts.dim_trials") == [("NCT00000001",)]
 
 
 def test_needs_a_complete_load() -> None:

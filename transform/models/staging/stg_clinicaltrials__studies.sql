@@ -1,18 +1,10 @@
--- One row per trial in a raw ClinicalTrials.gov load, with the fields the marts use pulled out
--- of the JSON. A field missing from a trial comes through as null.
 with studies as (
     select unnest(studies) as study
-    from read_json(
-        '{{ var("raw_run_dir") }}/page-*.json.gz',
-        columns = {studies: 'JSON[]'},
-        maximum_object_size = 200000000
-    )
+    from {{ source('clinicaltrials', 'study_pages') }}
 ),
 
-protocol as (
-    select
-        study -> '$.protocolSection' as p,
-        study ->> '$.derivedSection.conditionBrowseModule.meshes[*].term' as mesh_terms
+sections as (
+    select study -> '$.protocolSection' as p, study -> '$.derivedSection' as d
     from studies
 )
 
@@ -26,7 +18,6 @@ select
     p ->> '$.sponsorCollaboratorsModule.leadSponsor.name' as lead_sponsor,
     p ->> '$.sponsorCollaboratorsModule.leadSponsor.class' as lead_sponsor_class,
     cast(p ->> '$.designModule.enrollmentInfo.count' as integer) as enrollment,
-    -- "2014-04" or "2014-04-02": kept as text so a month is not passed off as a day
     p ->> '$.statusModule.startDateStruct.date' as start_date,
     cast(p ->> '$.statusModule.lastUpdatePostDateStruct.date' as date) as last_updated,
     p ->> '$.eligibilityModule.sex' as sex,
@@ -35,7 +26,7 @@ select
     cast(p ->> '$.eligibilityModule.healthyVolunteers' as boolean) as healthy_volunteers,
     p ->> '$.eligibilityModule.eligibilityCriteria' as eligibility_criteria,
     cast(p -> '$.conditionsModule.conditions' as varchar[]) as conditions,
-    mesh_terms,
+    cast(d -> '$.conditionBrowseModule.meshes' as json[]) as condition_meshes,
     cast(p -> '$.armsInterventionsModule.interventions' as json[]) as interventions,
     cast(p -> '$.contactsLocationsModule.locations' as json[]) as locations
-from protocol
+from sections

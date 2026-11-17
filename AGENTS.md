@@ -39,4 +39,6 @@ FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoin
   failed step's error; `fork` from that step re-runs it.
 - Run dbt in its own process: in-process, DuckDB keeps small writes in the `.wal` file until the
   connection closes, so swapping in the `.duckdb` file alone loses them.
+- dbt-duckdb formats a source's `external_location` with `str.format` by default, so `{...}`
+  in DuckDB SQL breaks it: set `formatter: oldstyle`.
 - Steps must raise errors that can be pickled; httpx's `HTTPStatusError` can't be loaded back.

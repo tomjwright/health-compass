@@ -77,14 +77,45 @@ uv run --env-file .env python -m health_compass.transform
 ```
 
 dbt reads the newest complete load (its `manifest.json` says `"complete": true`) and builds
-`data/health_compass.duckdb` with the tables `trials`, `trial_conditions`, `trial_interventions`
-and `trial_sites` (with latitude and longitude). Every model has an enforced contract (column
-names and types), and the build runs dbt's tests. It builds a new file and only swaps it in if
-everything passes, so a bad load never replaces good tables. Query them with
-`duckdb -readonly data/health_compass.duckdb`.
+`data/health_compass.duckdb` in three layers:
 
-Each build rebuilds every table from one complete load, which is a snapshot of all recruiting
-trials. So there are no incremental models: a trial that stops recruiting simply drops out.
+- `staging`: one row per trial, the raw JSON renamed and typed (read as a dbt source).
+- `intermediate`: views that unnest each trial's conditions, interventions and sites.
+- `marts`: a star schema for the API and agents.
+
+| Table | One row per |
+|---|---|
+| `fct_trial_sites` | trial per site: the starting point for "trials near me" |
+| `fct_trials` | trial, with its enrollment and last-update date |
+| `dim_trials` | trial: title, phase, eligibility, `overall_status`, `is_recruiting` |
+| `dim_locations` | site: facility, city, country, latitude and longitude |
+| `dim_conditions` + `bridge_trial_conditions` | condition, as the sponsor wrote it or as a MeSH term |
+| `dim_interventions` + `bridge_trial_interventions` | drug, device, procedure, ... |
+| `dim_sponsors`, `dim_dates` | lead sponsor, day |
+
+Facts and bridges join to dimensions on `*_key` columns (hashes made by `dbt_utils`). Staging and
+marts have enforced contracts (column names and types), and the build runs dbt's tests: unique
+keys, and every key in a fact or bridge exists in its dimension. It builds a new file and only
+swaps it in if everything passes, so a bad load never replaces good tables. Query them with
+`duckdb -readonly data/health_compass.duckdb`, e.g. alopecia trials by distance from Singapore:
+
+```sql
+select t.nct_id, l.facility, l.city, t.is_recruiting
+from marts.fct_trial_sites
+join marts.dim_trials t using (trial_key)
+join marts.dim_locations l using (location_key)
+where trial_key in (
+    select trial_key
+    from marts.bridge_trial_conditions
+    join marts.dim_conditions using (condition_key)
+    where condition_name ilike '%alopecia%'
+)
+order by (l.latitude - 1.29) ^ 2 + (l.longitude - 103.85) ^ 2
+limit 3;
+```
+
+For now each build rebuilds every table from one complete load, a snapshot of all recruiting
+trials. Incremental loads, with a history of each trial's status, are next.
 
 ## Roadmap
 

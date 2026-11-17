@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: stg_clinicaltrials__studies
-    description: One row per trial in the latest complete ClinicalTrials.gov load.
+    description: One row per trial in the load, with the fields the marts use, renamed and typed.
     columns:
       - { name: nct_id, data_type: varchar, constraints: [{ type: not_null }] }
       - { name: title, data_type: varchar }
@@ -20,7 +20,7 @@ models:
       - { name: maximum_age, data_type: varchar }
       - { name: healthy_volunteers, data_type: boolean }
       - { name: eligibility_criteria, data_type: varchar }
-      - { name: conditions, data_type: "varchar[]" }
-      - { name: mesh_terms, data_type: "varchar[]" }
+      - { name: conditions, data_type: "varchar[]", description: As the sponsor wrote them. }
+      - { name: condition_meshes, data_type: "json[]", description: "MeSH terms: [{id, term}]." }
       - { name: interventions, data_type: "json[]" }
       - { name: locations, data_type: "json[]" }

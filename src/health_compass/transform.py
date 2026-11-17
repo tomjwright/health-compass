@@ -39,28 +39,29 @@ def latest_complete_load() -> Path:
     return max(loads)[2]
 
 
+def dbt(*args: str, env: dict[str, str] | None = None) -> bool:
+    """Run a dbt command in its own process (so DuckDB closes the file before the swap)."""
+    command = [sys.executable, "-m", "dbt.cli.main", *args, f"--project-dir={TRANSFORM_DIR}"]
+    command.append(f"--profiles-dir={TRANSFORM_DIR}")
+    return subprocess.run(command, env=env).returncode == 0  # noqa: S603 (fixed command)
+
+
 def build() -> None:
     load = latest_complete_load()
     live = warehouse_path()
     new = live.with_name(live.name + ".new")
     new.unlink(missing_ok=True)  # left over from a failed build
     live.parent.mkdir(parents=True, exist_ok=True)
+    if not (TRANSFORM_DIR / "dbt_packages").exists() and not dbt("deps"):
+        raise SystemExit("dbt deps failed: could not install dbt_utils (see package-lock.yml).")
     with tracer.start_as_current_span("dbt.build", attributes={"load": load.name}):
         log.info("building %s from %s", live, load)
-        # A separate process, so DuckDB closes (and finishes writing) the file before the swap.
-        dbt = subprocess.run(  # noqa: S603 (fixed command, no user input)
-            [
-                sys.executable,
-                "-m",
-                "dbt.cli.main",
-                "build",
-                f"--project-dir={TRANSFORM_DIR}",
-                f"--profiles-dir={TRANSFORM_DIR}",
-                f"--vars={json.dumps({'raw_run_dir': str(load.resolve())})}",
-            ],
+        passed = dbt(
+            "build",
+            f"--vars={json.dumps({'raw_run_dir': str(load.resolve())})}",
             env=os.environ | {"DBT_DUCKDB_PATH": str(new)},
         )
-    if dbt.returncode != 0:
+    if not passed:
         raise SystemExit(f"dbt build failed, so {live} was left as it was.")
     new.replace(live)
     log.info("built %s from %s", live, load)
