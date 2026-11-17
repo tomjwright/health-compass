@@ -1,9 +1,8 @@
 """Land every recruiting trial from ClinicalTrials.gov as raw JSON, as a durable DBOS workflow.
 
 Each API page is one DBOS step, saved unchanged (gzipped) under
-`$RAW_DATA_DIR/clinicaltrials/<workflow id>/`. If the process dies, re-running the same day's
-workflow skips the pages already saved and carries on from the next one. If a page failed every
-retry, re-running starts a new attempt that carries on from that page (see `run_today`).
+`$RAW_DATA_DIR/clinicaltrials/<workflow id>/`. A run is named after the version of the data it
+loads, so re-running carries on from where the last run for that version stopped (see `run_load`).
 `manifest.json` is written last, so a run folder without one is incomplete.
 
     uv run --env-file .env python -m health_compass.ingest.clinicaltrials [--max-pages N]
@@ -14,7 +13,7 @@ import gzip
 import json
 import logging
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -100,10 +99,11 @@ def check_schema() -> None:
 
 
 @DBOS.workflow()
-def ingest_recruiting_trials(max_pages: int | None = None) -> dict[str, Any]:
+def ingest_recruiting_trials(
+    version: dict[str, str], max_pages: int | None = None
+) -> dict[str, Any]:
     with tracer.start_as_current_span("clinicaltrials.ingest"):
         check_schema()
-        version = fetch_json("/version")
         run_dir, started_at = start_run()
         page, studies, token = 0, 0, None
         while True:
@@ -126,13 +126,15 @@ def ingest_recruiting_trials(max_pages: int | None = None) -> dict[str, Any]:
         return manifest
 
 
-def run_today(max_pages: int | None = None) -> dict[str, Any]:
-    """Run today's load, or carry on from today's last failed attempt.
+def run_load(max_pages: int | None = None) -> dict[str, Any]:
+    """Load the data ClinicalTrials.gov currently publishes, or carry on loading it.
 
-    Attempts are `clinicaltrials-<date>`, then `...-attempt-2` and so on. Re-running after a crash
-    resumes the current attempt, and after a success returns its result without fetching again.
+    The run is named after the data, not the clock: `clinicaltrials-<dataTimestamp>`, then
+    `...-attempt-2` and so on after failures. Re-running after a crash resumes the current
+    attempt, and after a success returns its result until newer data is published.
     """
-    base_id = f"clinicaltrials-{date.today().isoformat()}"
+    version = get("/version").json()
+    base_id = f"clinicaltrials-{version['dataTimestamp']}"
     if max_pages:
         base_id += f"-{max_pages}-pages"
     workflow_id, attempt, previous_id = base_id, 1, ""
@@ -150,7 +152,7 @@ def run_today(max_pages: int | None = None) -> dict[str, Any]:
             ).get_result()
             return manifest
         # Otherwise (first attempt, or a failure outside a step such as a schema change) start over.
-        return ingest_recruiting_trials(max_pages)
+        return ingest_recruiting_trials(version, max_pages)
 
 
 def accept_schema() -> None:
@@ -174,7 +176,7 @@ def main() -> None:
     setup_tracing("health-compass-ingest")
     DBOS(config={"name": "health-compass", "system_database_url": os.environ["DATABASE_URL"]})
     DBOS.launch()
-    run_today(args.max_pages)
+    run_load(args.max_pages)
     DBOS.destroy()
 
 

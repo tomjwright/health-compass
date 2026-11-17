@@ -57,9 +57,14 @@ This is a DBOS workflow, saved step by step in Postgres. Each page of 1,000 tria
 unchanged under `data/raw/clinicaltrials/<workflow id>/` (about 225 MB for all ~65,000),
 and `manifest.json` is written last.
 
-- **Crash:** run the same command again the same day. DBOS resumes the run at the next page.
-- **A page fails 3 times:** the run stops. Running the command again the same day starts a new
-  attempt (`...-attempt-2`) that carries on from that page, keeping the pages already saved.
+Each run is named after the version of the data it loads (`dataTimestamp` from the API's
+`/version`, e.g. `clinicaltrials-2026-11-16T10:00:05`), not the time it runs. ClinicalTrials.gov
+publishes new data about once a day. Running the command again:
+
+- **after a crash** resumes the run at the next page.
+- **after a page failed 3 times** starts a new attempt (`...-attempt-2`) that carries on from
+  that page, keeping the pages already saved.
+- **after a success** does nothing until newer data is published, then loads that.
 - **Schema change:** each run first compares the API's data model with
   `src/health_compass/ingest/clinicaltrials_schema.json`. New fields are logged. Removed or
   retyped fields stop the run. Update the dbt models, then run the command with

@@ -10,6 +10,7 @@ from dbos import DBOS, SetWorkflowID
 from health_compass.ingest import clinicaltrials
 
 METADATA = [{"name": "protocolSection", "sourceType": "STRUCT", "type": "ProtocolSection"}]
+VERSION = {"apiVersion": "2.0.5", "dataTimestamp": "2026-11-16T10:00:05"}
 PAGES = {
     None: {"studies": [{"id": 1}, {"id": 2}], "nextPageToken": "p2"},
     "p2": {"studies": [{"id": 3}]},
@@ -22,6 +23,7 @@ class FakeApi:
     def __init__(self) -> None:
         self.metadata = METADATA
         self.failures_left = 0
+        self.version = VERSION
         self.requests: list[str] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -29,7 +31,7 @@ class FakeApi:
         if request.url.path.endswith("/metadata"):
             return httpx.Response(200, json=self.metadata)
         if request.url.path.endswith("/version"):
-            return httpx.Response(200, json={"apiVersion": "2.0.5", "dataTimestamp": "2026-11-16"})
+            return httpx.Response(200, json=self.version)
         cursor = request.url.params.get("pageToken")
         if cursor == "p2" and self.failures_left:
             self.failures_left -= 1
@@ -56,7 +58,7 @@ def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[FakeApi]:
 
 def run(workflow_id: str) -> dict[str, object]:
     with SetWorkflowID(workflow_id):
-        return clinicaltrials.ingest_recruiting_trials()
+        return clinicaltrials.ingest_recruiting_trials(VERSION)
 
 
 def test_saves_every_page_unchanged_then_the_manifest(api: FakeApi, tmp_path: Path) -> None:
@@ -84,27 +86,37 @@ def test_failed_page_is_retried(api: FakeApi) -> None:
 def test_rerun_carries_on_from_the_failed_page_once(api: FakeApi, tmp_path: Path) -> None:
     api.failures_left = 3  # every attempt at page 2 fails, so the workflow stops
     with pytest.raises(Exception, match="save_page has exceeded its maximum of 3 retries"):
-        clinicaltrials.run_today()
+        clinicaltrials.run_load()
 
     api.failures_left = 0
-    assert clinicaltrials.run_today()["studies"] == 3
+    assert clinicaltrials.run_load()["studies"] == 3
     assert sum(url.endswith("pageSize=1000") for url in api.requests) == 1  # page 1 fetched once
     run_dirs = [path.name for path in (tmp_path / "raw" / "clinicaltrials").iterdir()]
     assert len(run_dirs) == 1
     assert (tmp_path / "raw" / "clinicaltrials" / run_dirs[0] / "manifest.json").exists()
 
     requests_after_success = len(api.requests)
-    clinicaltrials.run_today()
-    assert len(api.requests) == requests_after_success
+    clinicaltrials.run_load()
+    assert api.requests[requests_after_success:] == [f"{clinicaltrials.API}/version"]
+
+
+def test_rerun_loads_again_only_when_newer_data_is_published(api: FakeApi) -> None:
+    first = clinicaltrials.run_load()
+    assert clinicaltrials.run_load() == first
+
+    api.version = {"apiVersion": "2.0.5", "dataTimestamp": "2026-11-17T10:00:05"}
+    second = clinicaltrials.run_load()
+    assert second["workflow_id"] == "clinicaltrials-2026-11-17T10:00:05"
+    assert second["data_timestamp"] == "2026-11-17T10:00:05"
 
 
 def test_rerun_after_schema_change_starts_over(api: FakeApi) -> None:
     api.metadata = [{"name": "protocolSection", "sourceType": "TEXT", "type": "text"}]
     with pytest.raises(clinicaltrials.SchemaChangeError):
-        clinicaltrials.run_today()
+        clinicaltrials.run_load()
 
     api.metadata = METADATA  # as if the snapshot had been accepted
-    assert clinicaltrials.run_today()["studies"] == 3
+    assert clinicaltrials.run_load()["studies"] == 3
 
 
 def test_max_pages_must_be_at_least_one(monkeypatch: pytest.MonkeyPatch) -> None:
