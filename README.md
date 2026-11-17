@@ -73,7 +73,7 @@ publishes new data about once a day. Running the command again:
 ### Build the trial tables
 
 ```bash
-uv run python -m health_compass.transform
+uv run --env-file .env python -m health_compass.transform
 ```
 
 dbt reads the newest complete load (its `manifest.json` says `"complete": true`) and builds
