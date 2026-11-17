@@ -1,9 +1,10 @@
-"""Build the trial tables in DuckDB with dbt, from the complete ClinicalTrials.gov loads.
+"""Build the trial tables in DuckDB: load the new raw loads with Python, then transform with dbt.
 
-Staging is append-only: it keeps every load parsed so far, and each build parses only the new
-loads. So dbt builds on a copy of the live database file. Only if every model and test passes does
-the copy replace the live file, so readers (the API, the agents) always see a complete, tested
-database. They open it read-only; DuckDB allows one writer, and this keeps the writer off it.
+The raw tables and staging are append-only: they keep every load so far, and each build adds only
+the new loads. So the build works on a copy of the live database file. Only if every model and
+test passes does the copy replace the live file, so readers (the API, the agents) always see a
+complete, tested database. They open it read-only; DuckDB allows one writer, and this keeps the
+writer off it.
 
     uv run --env-file .env python -m health_compass.transform [--full-refresh]
 
@@ -23,6 +24,7 @@ from pathlib import Path
 from opentelemetry import trace
 
 from health_compass.ingest.clinicaltrials import raw_dir
+from health_compass.load import load_raw
 from health_compass.telemetry import setup_logging, setup_tracing
 
 TRANSFORM_DIR = Path(__file__).resolve().parents[2] / "transform"
@@ -56,13 +58,10 @@ def build(full_refresh: bool = False) -> None:
     installed = (TRANSFORM_DIR / "dbt_packages/dbt_utils/dbt_project.yml").exists()
     if not installed and not dbt("deps"):
         raise SystemExit("dbt deps failed: could not install dbt_utils (see package-lock.yml).")
+    load_raw(new)
     with tracer.start_as_current_span("dbt.build", attributes={"full_refresh": full_refresh}):
-        log.info("building %s from %s (full refresh: %s)", live, raw_dir(), full_refresh)
-        passed = dbt(
-            "build",
-            f"--vars={json.dumps({'raw_dir': str(raw_dir().resolve())})}",
-            env=os.environ | {"DBT_DUCKDB_PATH": str(new)},
-        )
+        log.info("building %s (full refresh: %s)", live, full_refresh)
+        passed = dbt("build", env=os.environ | {"DBT_DUCKDB_PATH": str(new)})
     if not passed:
         raise SystemExit(f"dbt build failed, so {live} was left as it was.")
     new.replace(live)

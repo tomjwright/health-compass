@@ -1,22 +1,12 @@
 {{ config(materialized='incremental', incremental_strategy='append', on_schema_change='append_new_columns') }}
 
 -- Append-only: one row per trial per load. Each build adds only the loads not in this table yet.
-with pages as (
-    select regexp_extract(filename, '([^/]+)/[^/]+$', 1) as load_id, studies
-    from {{ source('clinicaltrials', 'study_pages') }}
-),
-
-studies as (
-    select load_id, unnest(studies) as study
-    from pages
+with sections as (
+    select load_id, study -> '$.protocolSection' as p, study -> '$.derivedSection' as d
+    from {{ source('raw', 'clinicaltrials_studies') }}
     {% if is_incremental() %}
     where load_id not in (select load_id from {{ this }})
     {% endif %}
-),
-
-sections as (
-    select load_id, study -> '$.protocolSection' as p, study -> '$.derivedSection' as d
-    from studies
 )
 
 select

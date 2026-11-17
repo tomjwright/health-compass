@@ -83,11 +83,13 @@ publishes new data about once a day. Running the command again:
 uv run --env-file .env python -m health_compass.transform
 ```
 
-dbt reads the complete loads (their `manifest.json` says `"complete": true`) and builds
-`data/health_compass.duckdb` in three layers:
+Python loads each new complete load (its `manifest.json` says `"complete": true`) into two plain
+tables in `data/health_compass.duckdb`: `raw.clinicaltrials_loads` and `raw.clinicaltrials_studies`
+(one row per trial per load, the JSON unchanged). dbt only transforms, reading those tables as
+sources, in three layers:
 
-- `staging`: append-only, one row per trial per load, the raw JSON renamed and typed (read as a
-  dbt source). Each build adds only the loads it hasn't seen yet.
+- `staging`: append-only, one row per trial per load, the raw JSON renamed and typed. Each build
+  adds only the loads it hasn't seen yet.
 - `intermediate`: `int_trial_versions` keeps one row per version of a trial, then views unnest
   the current version's conditions, interventions and sites.
 - `marts`: a star schema for the API and agents, rebuilt from staging on every build.
@@ -106,8 +108,8 @@ dbt reads the complete loads (their `manifest.json` says `"complete": true`) and
 Facts and bridges join to dimensions on `*_key` columns (hashes made by `dbt_utils`). Staging and
 marts have enforced contracts (column names and types), and the build runs dbt's tests: unique
 keys, and every key in a fact or bridge exists in its dimension. It builds a new file and only
-swaps it in if everything passes, so a bad load never replaces good tables. Because staging
-keeps its rows from earlier builds, the new file starts as a copy of the live one. Query them with
+swaps it in if everything passes, so a bad load never replaces good tables. Because the raw
+tables and staging keep their rows from earlier builds, the new file starts as a copy of the live one. Query them with
 `duckdb -readonly data/health_compass.duckdb`, e.g. alopecia trials by distance from Singapore:
 
 ```sql
