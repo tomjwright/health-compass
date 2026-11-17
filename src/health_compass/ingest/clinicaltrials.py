@@ -134,6 +134,8 @@ def main() -> None:
     parser.add_argument("--max-pages", type=int, help="stop early, for a quick local run")
     parser.add_argument("--accept-schema", action="store_true", help="save the current schema")
     args = parser.parse_args()
+    if args.max_pages is not None and args.max_pages < 1:
+        parser.error("--max-pages must be at least 1")
     if args.accept_schema:
         accept_schema()
         return

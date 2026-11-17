@@ -94,6 +94,12 @@ def test_forked_run_skips_pages_already_saved(api: FakeApi, tmp_path: Path) -> N
     assert (tmp_path / "raw" / "clinicaltrials" / "run-1" / "manifest.json").exists()
 
 
+def test_max_pages_must_be_at_least_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.argv", ["clinicaltrials", "--max-pages", "0"])
+    with pytest.raises(SystemExit):
+        clinicaltrials.main()
+
+
 def test_breaking_schema_change_stops_before_any_page(api: FakeApi) -> None:
     api.metadata = [{"name": "protocolSection", "sourceType": "TEXT", "type": "text"}]
     with pytest.raises(clinicaltrials.SchemaChangeError):
