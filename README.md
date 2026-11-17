@@ -46,6 +46,30 @@ curl localhost:8000/health                # {"status":"ok"}
 
 Traces show up in Jaeger at http://localhost:16686 (service `health-compass-api`).
 
+### Load trials
+
+```bash
+uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials
+uv run --env-file .env python -m health_compass.ingest.clinicaltrials --max-pages 2   # quick run
+```
+
+This is a DBOS workflow, saved step by step in Postgres. Each page of 1,000 trials is saved
+unchanged under `data/raw/clinicaltrials/<workflow id>/` (about 225 MB for all ~65,000),
+and `manifest.json` is written last.
+
+Each run is named after the version of the data it loads (`dataTimestamp` from the API's
+`/version`, e.g. `clinicaltrials-2026-11-16T10:00:05`), not the time it runs. ClinicalTrials.gov
+publishes new data about once a day. Running the command again:
+
+- **after a crash** resumes the run at the next page.
+- **after a page failed 3 times** starts a new attempt (`...-attempt-2`) that carries on from
+  that page, keeping the pages already saved.
+- **after a success** does nothing until newer data is published, then loads that.
+- **Schema change:** each run first compares the API's data model with
+  `src/health_compass/ingest/clinicaltrials_schema.json`. New fields are logged. Removed or
+  retyped fields stop the run. Update the dbt models, then run the command with
+  `--accept-schema` and commit the new snapshot.
+
 ## Roadmap
 
 1. Scaffold: tooling, CI, Docker Compose, OpenTelemetry and JSON logging
