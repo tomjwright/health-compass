@@ -38,6 +38,12 @@ def setup_logging() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
+    # Uvicorn gives its own loggers separate plain-text handlers; send them through ours.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        logger.handlers = []
+        logger.propagate = True
+        logger.setLevel(logging.NOTSET)
 
 
 def setup_tracing(service_name: str) -> None:
