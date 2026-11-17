@@ -25,8 +25,15 @@ uv run pre-commit run --all-files
 ```bash
 docker compose up -d                      # Postgres (DBOS, LangGraph) + Jaeger (traces)
 uv run --env-file .env uvicorn health_compass.api:app --reload
+uv run --env-file .env python -m health_compass.ingest.clinicaltrials [--max-pages N]
+uv run python -m health_compass.ingest.clinicaltrials --accept-schema   # after a schema change
 ```
 
 ## Architecture in one line
 Sources → DBOS ingestion workflows → raw JSON → dbt (DuckDB) → marts → LangGraph agents →
 FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoint in `.env`.
+
+## Gotchas
+- DBOS saves each step's result, including errors, and replays them. `resume` re-raises a
+  failed step's error; `fork` from that step re-runs it.
+- Steps must raise errors that can be pickled; httpx's `HTTPStatusError` can't be loaded back.

@@ -43,6 +43,10 @@ def setup_logging() -> None:
     for name in ("uvicorn", "uvicorn.access"):
         for uvicorn_handler in logging.getLogger(name).handlers:
             uvicorn_handler.setFormatter(JsonFormatter())
+    # DBOS adds its own plain-text handler unless its logger already has one, so give it ours.
+    dbos = logging.getLogger("dbos")
+    dbos.handlers = [handler]
+    dbos.propagate = False
 
 
 def setup_tracing(service_name: str) -> None:
