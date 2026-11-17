@@ -46,6 +46,22 @@ curl localhost:8000/health                # {"status":"ok"}
 
 Traces show up in Jaeger at http://localhost:16686 (service `health-compass-api`).
 
+### Find trials
+
+Once the trial tables are built (see below), `POST /trials` finds trials for a condition, each at
+its site nearest the user. Recruiting trials come first, nearest first, then trials that have
+stopped recruiting (`is_recruiting: false`, with their `overall_status`). The search is a POST
+body, so the condition and location stay out of URLs, logs and traces.
+
+```bash
+curl -s localhost:8000/trials -H 'content-type: application/json' \
+  -d '{"condition": "alopecia", "latitude": 1.29, "longitude": 103.85, "limit": 3}'
+```
+
+The query is plain SQL in `src/health_compass/find_trials.sql`. The distance comes from the
+haversine formula. Each request opens its own read-only DuckDB connection, so it reads the latest
+build.
+
 ### Load trials
 
 ```bash
