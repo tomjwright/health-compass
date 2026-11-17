@@ -27,6 +27,8 @@ from health_compass.telemetry import setup_logging, setup_tracing
 
 API = "https://clinicaltrials.gov/api/v2"
 PAGE_SIZE = 1000
+# How many times to try each request before giving up (a 503 or dropped connection is often brief).
+MAX_ATTEMPTS = 3
 SCHEMA_SNAPSHOT = Path(__file__).with_name("clinicaltrials_schema.json")
 
 log = logging.getLogger(__name__)
@@ -54,13 +56,13 @@ def raw_dir() -> Path:
     return Path(os.environ.get("RAW_DATA_DIR", "data/raw")) / "clinicaltrials"
 
 
-@DBOS.step(retries_allowed=True, max_attempts=3)
+@DBOS.step(retries_allowed=True, max_attempts=MAX_ATTEMPTS)
 def fetch_json(path: str) -> Any:
     with tracer.start_as_current_span("clinicaltrials.fetch", attributes={"path": path}):
         return get(path).json()
 
 
-@DBOS.step(retries_allowed=True, max_attempts=3)
+@DBOS.step(retries_allowed=True, max_attempts=MAX_ATTEMPTS)
 def save_page(run_dir: str, page: int, page_token: str | None) -> tuple[str | None, int]:
     """Fetch one page of recruiting trials and save it unchanged. Returns (next token, count)."""
     params: dict[str, str | int] = {"filter.overallStatus": "RECRUITING", "pageSize": PAGE_SIZE}
@@ -128,14 +130,18 @@ def ingest_recruiting_trials(
 
 
 def current_version() -> Any:
-    """Read the data's version. This runs before any workflow, so it retries by itself."""
-    for wait in (1, 2):
+    """Read the data's version, trying up to MAX_ATTEMPTS times.
+
+    DBOS only retries steps inside a workflow, and this runs before the workflow starts (its
+    answer names the workflow), so it retries by itself.
+    """
+    for attempt in range(1, MAX_ATTEMPTS):
         try:
             return get("/version").json()
         except (RuntimeError, httpx.TransportError):
-            log.warning("GET /version failed, retrying in %ds", wait)
-            time.sleep(wait)
-    return get("/version").json()
+            log.warning("GET /version failed (attempt %d of %d)", attempt, MAX_ATTEMPTS)
+            time.sleep(attempt)
+    return get("/version").json()  # the last attempt: if this fails too, its error stops the run
 
 
 def run_load(max_pages: int | None = None) -> dict[str, Any]:
