@@ -37,7 +37,8 @@ def test_finds_trials_nearest_first_with_stopped_ones_last() -> None:
     near = trial("NCT00000011", site("Kuala Lumpur", 3.14, 101.69), site("Singapore", 1.29, 103.85))
     far = trial("NCT00000012", site("London", 51.51, -0.13))
     stopped = trial("NCT00000013", site("Johor Bahru", 1.49, 103.74))
-    save_load("2026-11-16", [near, far, stopped, BARE_STUDY])
+    no_longitude = trial("NCT00000014", {"city": "Somewhere", "geoPoint": {"lat": 1.3}})
+    save_load("2026-11-16", [near, far, stopped, no_longitude, BARE_STUDY])
     save_load("2026-11-17", [updated(stopped, "COMPLETED", "2026-11-17")])
     transform.build()
 

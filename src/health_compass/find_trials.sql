@@ -26,7 +26,7 @@ sites as (
     join marts.dim_trials as t using (trial_key)
     join marts.fct_trial_sites using (trial_key)
     join marts.dim_locations as l using (location_key)
-    where l.latitude is not null
+    where l.latitude is not null and l.longitude is not null
 )
 
 select
