@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: stg_clinicaltrials__studies
+    description: One row per trial in the load, with the fields the marts use, renamed and typed.
+    columns:
+      - { name: nct_id, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: title, data_type: varchar }
+      - { name: summary, data_type: varchar }
+      - { name: overall_status, data_type: varchar }
+      - { name: study_type, data_type: varchar }
+      - { name: phases, data_type: "varchar[]" }
+      - { name: lead_sponsor, data_type: varchar }
+      - { name: lead_sponsor_class, data_type: varchar }
+      - { name: enrollment, data_type: integer }
+      - { name: start_date, data_type: varchar }
+      - { name: last_updated, data_type: date }
+      - { name: sex, data_type: varchar }
+      - { name: minimum_age, data_type: varchar }
+      - { name: maximum_age, data_type: varchar }
+      - { name: healthy_volunteers, data_type: boolean }
+      - { name: eligibility_criteria, data_type: varchar }
+      - { name: conditions, data_type: "varchar[]", description: As the sponsor wrote them. }
+      - { name: condition_meshes, data_type: "json[]", description: "MeSH terms: [{id, term}]." }
+      - { name: interventions, data_type: "json[]" }
+      - { name: locations, data_type: "json[]" }

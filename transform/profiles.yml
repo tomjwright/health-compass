@@ -1,0 +1,8 @@
+# `python -m health_compass.transform` points this at a new file, then swaps it in when dbt passes.
+health_compass:
+  target: default
+  outputs:
+    default:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH') }}"
+      threads: 4

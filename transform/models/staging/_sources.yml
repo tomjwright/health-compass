@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: clinicaltrials
+    description: Raw ClinicalTrials.gov API pages, exactly as the ingestion saved them.
+    tables:
+      - name: study_pages
+        description: One row per page of one complete load; `studies` holds up to 1,000 trials.
+        config:
+          meta:
+            formatter: oldstyle # the default treats {studies: ...} as a placeholder
+            external_location: >-
+              read_json('{{ var("raw_run_dir") }}/page-*.json.gz',
+              columns = {studies: 'JSON[]'}, maximum_object_size = 200000000)

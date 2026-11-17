@@ -1,0 +1,164 @@
+version: 2
+
+# A star schema: facts hold keys and measures, dimensions describe them. Join on the *_key
+# columns. Descriptions here are also what the agents read to write SQL, so keep them plain.
+models:
+  - name: dim_trials
+    description: One row per trial on ClinicalTrials.gov.
+    columns:
+      - name: trial_key
+        data_type: varchar
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique]
+      - name: nct_id
+        description: ClinicalTrials.gov ID, e.g. NCT02102165. Link to https://clinicaltrials.gov/study/<nct_id>.
+        data_type: varchar
+        constraints: [{ type: not_null }]
+        data_tests: [unique]
+      - { name: title, data_type: varchar }
+      - { name: summary, data_type: varchar, description: The sponsor's brief summary. }
+      - name: overall_status
+        data_type: varchar
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [RECRUITING, NOT_YET_RECRUITING, ENROLLING_BY_INVITATION, ACTIVE_NOT_RECRUITING,
+                  COMPLETED, SUSPENDED, TERMINATED, WITHDRAWN, UNKNOWN, WITHHELD, AVAILABLE,
+                  NO_LONGER_AVAILABLE, TEMPORARILY_NOT_AVAILABLE, APPROVED_FOR_MARKETING]
+      - name: is_recruiting
+        description: True only when overall_status is RECRUITING. Show any other trial as "not recruiting".
+        data_type: boolean
+        data_tests: [not_null]
+      - { name: study_type, data_type: varchar, description: "INTERVENTIONAL, OBSERVATIONAL or EXPANDED_ACCESS." }
+      - { name: phases, data_type: "varchar[]", description: "e.g. [PHASE2, PHASE3]; NA for trials without phases." }
+      - { name: start_date, data_type: varchar, description: "YYYY-MM or YYYY-MM-DD, as published." }
+      - { name: sex, data_type: varchar, description: "Who can join: ALL, FEMALE or MALE." }
+      - { name: minimum_age, data_type: varchar, description: "e.g. '18 Years'; null when there is no limit." }
+      - { name: maximum_age, data_type: varchar }
+      - { name: healthy_volunteers, data_type: boolean }
+      - { name: eligibility_criteria, data_type: varchar, description: Inclusion and exclusion criteria, as free text. }
+
+  - name: dim_sponsors
+    description: One row per lead sponsor.
+    columns:
+      - name: sponsor_key
+        data_type: varchar
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique]
+      - { name: sponsor_name, data_type: varchar }
+      - { name: sponsor_class, data_type: varchar, description: "INDUSTRY, NIH, OTHER_GOV, OTHER, ..." }
+
+  - name: dim_conditions
+    description: One row per condition name. Search both vocabularies to find every trial for a condition.
+    columns:
+      - name: condition_key
+        data_type: varchar
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique]
+      - { name: condition_name, data_type: varchar, data_tests: [not_null] }
+      - name: vocabulary
+        description: "'reported' (the sponsor's words) or 'mesh' (ClinicalTrials.gov's standard MeSH term)."
+        data_type: varchar
+        data_tests: [{ accepted_values: { arguments: { values: [reported, mesh] } } }]
+      - { name: mesh_id, data_type: varchar, description: "MeSH ID, e.g. D000505; null for reported names." }
+
+  - name: bridge_trial_conditions
+    description: Links trials to their conditions (a trial has many, and a condition many trials).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: [trial_key, condition_key] }
+    columns:
+      - name: trial_key
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_trials'), field: trial_key } } }]
+      - name: condition_key
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_conditions'), field: condition_key } } }]
+
+  - name: dim_interventions
+    description: One row per drug, device, procedure, etc. that trials test.
+    columns:
+      - name: intervention_key
+        data_type: varchar
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique]
+      - { name: intervention_type, data_type: varchar, description: "DRUG, DEVICE, BEHAVIORAL, ..." }
+      - { name: intervention_name, data_type: varchar }
+
+  - name: bridge_trial_interventions
+    description: Links trials to the interventions they test.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: [trial_key, intervention_key] }
+    columns:
+      - name: trial_key
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_trials'), field: trial_key } } }]
+      - name: intervention_key
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships: { arguments: { to: ref('dim_interventions'), field: intervention_key } }
+
+  - name: dim_locations
+    description: One row per trial site (a facility in a place). Use latitude and longitude to find sites near a place.
+    columns:
+      - name: location_key
+        data_type: varchar
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique]
+      - { name: facility, data_type: varchar }
+      - { name: city, data_type: varchar }
+      - { name: state, data_type: varchar }
+      - { name: country, data_type: varchar }
+      - { name: latitude, data_type: double, description: Null when ClinicalTrials.gov has no coordinates. }
+      - { name: longitude, data_type: double }
+
+  - name: dim_dates
+    description: One row per day, 1999-2040.
+    columns:
+      - name: date_day
+        data_type: date
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique]
+      - { name: year, data_type: bigint }
+      - { name: quarter, data_type: bigint }
+      - { name: month, data_type: bigint }
+      - { name: month_name, data_type: varchar }
+      - { name: day_of_week, data_type: bigint, description: "1 = Monday ... 7 = Sunday." }
+      - { name: day_name, data_type: varchar }
+
+  - name: fct_trials
+    description: One row per trial, with its planned size. Join to dim_trials for its details.
+    columns:
+      - name: trial_key
+        data_type: varchar
+        constraints: [{ type: not_null }, { type: primary_key }]
+        data_tests: [unique, { relationships: { arguments: { to: ref('dim_trials'), field: trial_key } } }]
+      - name: sponsor_key
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_sponsors'), field: sponsor_key } } }]
+      - name: last_updated_date
+        description: When the trial's record was last updated.
+        data_type: date
+        data_tests: [{ relationships: { arguments: { to: ref('dim_dates'), field: date_day } } }]
+      - { name: enrollment, data_type: integer, description: Planned or actual number of participants. }
+
+  - name: fct_trial_sites
+    description: One row per trial per site. The table to start from for "trials near me".
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: [trial_key, location_key] }
+    columns:
+      - name: trial_key
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_trials'), field: trial_key } } }]
+      - name: location_key
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_locations'), field: location_key } } }]
+      - name: sponsor_key
+        data_type: varchar
+        data_tests: [not_null, { relationships: { arguments: { to: ref('dim_sponsors'), field: sponsor_key } } }]
+      - name: site_status
+        description: "This site's own status, e.g. RECRUITING or NOT_YET_RECRUITING; it can differ from the trial's."
+        data_type: varchar

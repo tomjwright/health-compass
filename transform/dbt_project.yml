@@ -1,0 +1,28 @@
+name: health_compass
+version: "0.1.0"
+config-version: 2
+profile: health_compass
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  raw_run_dir: "" # set by `python -m health_compass.transform`
+
+models:
+  health_compass:
+    staging:
+      +schema: staging
+      # A table, not the usual view: it parses ~225 MB of gzipped JSON once, not once per model.
+      +materialized: table
+      +contract: { enforced: true }
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+      # The tables the API and agents query: a build fails if the SQL drifts from these columns.
+      +contract: { enforced: true }
