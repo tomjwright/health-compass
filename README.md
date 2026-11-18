@@ -189,8 +189,9 @@ uv run --env-file .env python -m health_compass.transform
 
 Python loads each new complete load (its `manifest.json` says `"complete": true`) into two plain
 tables in `data/health_compass.duckdb`: `raw.clinicaltrials_loads` and `raw.clinicaltrials_studies`
-(one row per trial per load, the JSON unchanged). dbt only transforms, reading those tables as
-sources, in three layers:
+(one row per trial per load, the JSON unchanged), one page at a time. dbt only transforms, reading
+those tables as sources, in three layers. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
+`1GB`), so a full build runs on a small laptop: about 1.2 GB for the whole process.
 
 - `staging`: append-only, one row per trial per load, the raw JSON renamed and typed. Each build
   adds only the loads it hasn't seen yet.
