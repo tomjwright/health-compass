@@ -49,9 +49,12 @@ def load_raw(database: Path) -> None:
             # Skip loads already in the tables, and loads cut short by --max-pages.
             if load_id in loaded_ids or not manifest["complete"]:
                 continue
+            pages = sorted(path.parent.glob("page-*.json.gz"))
+            if not pages:
+                raise SystemExit(f"{load_id} is marked complete but has no pages.")
             # One transaction, so a crash part-way never leaves half a load in the table.
             db.begin()
-            for page in sorted(path.parent.glob("page-*.json.gz")):
+            for page in pages:
                 db.execute(INSERT_STUDIES, [load_id, str(page)])
             mode, since = manifest.get("mode", "full"), manifest.get("since")
             db.execute(
