@@ -53,8 +53,8 @@ INTAKE_PROMPT = """Sort the user's question for a clinical trial finder.
 - personal_medical_advice: they ask about doses, or whether they should take, start or stop
   a treatment.
 - other: anything else.
-For trial_search, give the condition by its usual medical name, e.g. "alopecia" for
-"hair loss"."""
+For trial_search, give the condition as its official MeSH heading, e.g. "Alopecia" for
+"hair loss" or "Hypertension" for "high blood pressure"."""
 
 ANSWER_PROMPT = """You describe clinical trials to a member of the public.
 Use only the trials given. Never give doses or advice on what to take.
@@ -87,7 +87,7 @@ class AgentError(Exception):
 
 class Intake(BaseModel):
     kind: Literal["trial_search", "personal_medical_advice", "other"]
-    condition: str | None = Field(description="The condition's medical name, or null.")
+    condition: str | None = Field(description="The condition's MeSH heading, or null.")
 
 
 class TrialNote(BaseModel):
