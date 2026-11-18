@@ -101,3 +101,11 @@ def test_ask_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     response = TestClient(app).post("/ask", json={"question": "Hair loss trials?", **SINGAPORE})
     assert response.status_code == 200
     assert response.json()["outcome"] == "answered"
+
+
+def test_hides_model_output_when_the_llm_fails() -> None:
+    model = FakeModel("not an Intake: my hair loss question")
+    with pytest.raises(agent.AgentError) as raised:
+        ask(model)
+    assert str(raised.value) == "the agent failed with ValidationError"
+    assert raised.value.__suppress_context__

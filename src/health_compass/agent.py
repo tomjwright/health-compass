@@ -71,6 +71,10 @@ def chat_model() -> BaseChatModel:
     return init_chat_model(os.environ.get("LLM_MODEL", DEFAULT_MODEL), temperature=0)
 
 
+class AgentError(Exception):
+    """The agent failed. It carries no model output, so it is safe to log and trace."""
+
+
 class Intake(BaseModel):
     kind: Literal["trial_search", "personal_medical_advice", "other"]
     condition: str | None = Field(description="The condition's medical name, or null.")
@@ -127,10 +131,15 @@ class TrialAgent:
         self.graph = graph.compile()
 
     def ask(self, question: str, latitude: float, longitude: float) -> Answer:
-        with tracer.start_as_current_span("agent.ask") as span:
-            state = self.graph.invoke(
-                {"question": question, "latitude": latitude, "longitude": longitude}
-            )
+        with tracer.start_as_current_span("agent.ask", record_exception=False) as span:
+            try:
+                state = self.graph.invoke(
+                    {"question": question, "latitude": latitude, "longitude": longitude}
+                )
+            except Exception as error:
+                # LLM errors can quote the model's output, which can repeat the question, so
+                # only the error's type reaches traces and logs.
+                raise AgentError(f"the agent failed with {type(error).__name__}") from None
             answer: Answer = state["answer"]
             span.set_attribute("agent.outcome", answer.outcome)
         log.info("agent outcome: %s", answer.outcome)
@@ -138,7 +147,7 @@ class TrialAgent:
 
     def check_input(self, state: State) -> State:
         """Gateway: only trial searches go on; anything else gets a fixed refusal."""
-        with tracer.start_as_current_span("agent.check_input") as span:
+        with tracer.start_as_current_span("agent.check_input", record_exception=False) as span:
             reply = self.model.with_structured_output(Intake).invoke(
                 [("system", INTAKE_PROMPT), ("human", state["question"])]
             )
@@ -166,7 +175,7 @@ class TrialAgent:
 
     def write_answer(self, state: State) -> State:
         """The LLM sees each trial's ID, title and status: not its site or distance."""
-        with tracer.start_as_current_span("agent.write_answer") as span:
+        with tracer.start_as_current_span("agent.write_answer", record_exception=False) as span:
             trials = "\n".join(
                 f"{t.nct_id}: {t.title} ({t.overall_status})" for t in state["trials"]
             )
