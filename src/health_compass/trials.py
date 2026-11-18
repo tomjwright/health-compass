@@ -38,6 +38,7 @@ class Trial(BaseModel):
 
     nct_id: str
     title: str | None
+    summary: str | None
     overall_status: str
     is_recruiting: bool
     facility: str | None

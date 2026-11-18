@@ -23,6 +23,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, Field
 
+from health_compass.judge import unsupported_notes
 from health_compass.trials import TablesNotBuiltError, Trial, TrialSearch, find_trials
 
 log = logging.getLogger(__name__)
@@ -72,6 +73,14 @@ def chat_model() -> BaseChatModel:
     return init_chat_model(os.environ.get("LLM_MODEL", DEFAULT_MODEL), temperature=0)
 
 
+def judge_model() -> BaseChatModel:
+    """The LLM in JUDGE_MODEL, which checks the notes, or the agent's LLM if it isn't set."""
+    name = os.environ.get("JUDGE_MODEL")
+    if name is None:
+        return chat_model()
+    return init_chat_model(name, temperature=0)
+
+
 class AgentError(Exception):
     """The agent failed. It carries no model output, so it is safe to log and trace."""
 
@@ -114,15 +123,16 @@ class State(TypedDict, total=False):
 
 
 class TrialAgent:
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(self, model: BaseChatModel, judge: BaseChatModel) -> None:
         self.model = model
+        self.judge = judge
         graph = StateGraph(State)
         # LLM calls are retried, with backoff, when the provider is briefly overloaded.
         llm_retry = RetryPolicy(max_attempts=3)
         graph.add_node("check_input", self.check_input, retry_policy=llm_retry)
         graph.add_node("find_trials", self.find_trials)
         graph.add_node("write_answer", self.write_answer, retry_policy=llm_retry)
-        graph.add_node("check_output", self.check_output)
+        graph.add_node("check_output", self.check_output, retry_policy=llm_retry)
         graph.add_edge(START, "check_input")
         # Each gateway either sets the answer, which ends the run, or lets the run go on.
         graph.add_conditional_edges("check_input", after_check_input)
@@ -205,7 +215,8 @@ class TrialAgent:
         return {"draft": draft, "attempts": attempts}
 
     def check_output(self, state: State) -> State:
-        """Gateway: the draft must cite only the trials found, and give no doses or advice."""
+        """Gateway: the draft must cite only the trials found, give no doses or advice, and
+        say nothing about a trial that its record doesn't (checked by the judge LLM)."""
         draft = state["draft"]
         trials = state["trials"]
         found = set()
@@ -233,9 +244,18 @@ class TrialAgent:
         if gives_advice:
             problems.append("it tells the user what to take")
 
-        with tracer.start_as_current_span("agent.check_output") as span:
+        with tracer.start_as_current_span(
+            "agent.check_output", record_exception=False, set_status_on_exception=False
+        ) as span:
+            # The judge is only asked once the cheap checks pass.
+            unsupported = []
+            if not problems and notes:
+                unsupported = unsupported_notes(self.judge, trials, notes)
+            for nct_id in unsupported:
+                problems.append(f"the note on {nct_id} says something its record doesn't")
             span.set_attribute("agent.passed", not problems)
             span.set_attribute("agent.problems", len(problems))
+            span.set_attribute("agent.unsupported_notes", len(unsupported))
 
         if not problems:
             answered = add_notes(trials, notes)
