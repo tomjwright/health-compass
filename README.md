@@ -42,6 +42,7 @@ uv sync
 cp .env.example .env
 docker compose up -d                      # Postgres (DBOS) + Jaeger (traces)
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials: ~2 min, 225 MB
+uv run --env-file .env python -m health_compass.ingest.approvals        # US and EU drug approvals: ~1 min, 26 MB
 uv run --env-file .env python -m health_compass.transform               # dbt build: ~1 min, ~1 GB file
 uv run --env-file .env uvicorn health_compass.api:app --reload          # the API on port 8000
 curl localhost:8000/health                # {"status":"ok"}
@@ -210,6 +211,29 @@ publishes new data about once a day. Running the command again:
   retyped fields stop the run. Update the dbt models, then run the command with
   `--accept-schema` and commit the new snapshot.
 
+### Load drug approvals
+
+```bash
+uv run --env-file .env python -m health_compass.ingest.approvals
+```
+
+A DBOS workflow that downloads three free bulk files and saves them as gzipped JSON lines (one
+record per line) under `data/raw/approvals/approvals-<date>/`, then writes `manifest.json`:
+
+| File | Source | Records |
+|---|---|---|
+| `fda-applications-01.jsonl.gz` | [openFDA Drugs@FDA](https://open.fda.gov/apis/drug/drugsfda/): every US drug application, its products and approval history | ~29,500 |
+| `fda-labels-NN.jsonl.gz` | [openFDA drug labels](https://open.fda.gov/apis/drug/label/): what each label says the drug is for (`indications_and_usage`) | ~75,000 |
+| `ema-medicines.jsonl.gz` | [EMA medicines report](https://www.ema.europa.eu/en/medicines/download-medicine-data): every medicine for people EMA has assessed | ~2,400 |
+
+openFDA's labels are 14 zip files of about 130 MB each. Each one is streamed record by record,
+and only labels that name an FDA application are kept, with only `set_id`, `effective_time`,
+`indications_and_usage` and a few `openfda` fields. So the whole run takes about a minute and
+120 MB of memory. Each file is one DBOS step, so a crash resumes from the file it was on. A run
+is named after the day it runs: running it again the same day does nothing.
+
+Each load is a full copy of every approval, so the transform keeps only the newest one.
+
 ### Build the trial tables
 
 ```bash
@@ -219,13 +243,16 @@ uv run --env-file .env python -m health_compass.transform
 Python loads each new complete load (its `manifest.json` says `"complete": true`) into two plain
 tables in `data/health_compass.duckdb`: `raw.clinicaltrials_loads` and `raw.clinicaltrials_studies`
 (one row per trial per load, the JSON unchanged), one page at a time. dbt only transforms, reading
-those tables as sources, in three layers. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
+those tables as sources, in three layers. The newest approvals load replaces the last one in
+`raw.fda_applications`, `raw.fda_labels` and `raw.ema_medicines`. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
 `1GB`), so a full build runs on a small laptop: about 1.2 GB for the whole process.
 
 - `staging`: append-only, one row per trial per load, the raw JSON renamed and typed. Each build
   adds only the loads it hasn't seen yet.
 - `intermediate`: `int_trial_versions` keeps one row per version of a trial, then views unnest
   the current version's conditions, interventions and sites.
+- The approvals' staging models are views: each load replaces the last, so there is nothing to
+  append.
 - `marts`: a star schema for the API and agents, rebuilt from staging on every build.
 
 | Table | One row per |
@@ -238,6 +265,8 @@ those tables as sources, in three layers. DuckDB may use at most `DUCKDB_MEMORY_
 | `dim_conditions` + `bridge_trial_conditions` | condition, as the sponsor wrote it or as a MeSH term |
 | `dim_interventions` + `bridge_trial_interventions` | drug, device, procedure, ... |
 | `dim_sponsors`, `dim_dates` | lead sponsor, day |
+| `fct_approvals` | drug approval: an FDA application (`region = 'US'`) or EMA medicine (`'EU'`), with its status, approval date and indications |
+| `bridge_approval_conditions` | EU approval per MeSH heading it's approved for |
 
 Facts and bridges join to dimensions on `*_key` columns (hashes made by `dbt_utils`). Staging and
 marts have enforced contracts (column names and types), and the build runs dbt's tests: unique
