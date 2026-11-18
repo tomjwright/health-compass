@@ -56,8 +56,8 @@ http://localhost:16686 (service `health-compass-api`).
 
 ### Explore the data
 
-The easiest way is a database app such as [DBeaver](https://dbeaver.io) (free; `winget install
-dbeaver.dbeaver` on Windows): New Database Connection → DuckDB, choose
+The easiest way is a database app such as DBeaver Community (free, from
+https://dbeaver.io/download): New Database Connection → DuckDB, choose
 `data/health_compass.duckdb`, and add the driver property `access_mode` = `READ_ONLY`. On Windows,
 close it before running the transform, which can't replace a file another program has open.
 
