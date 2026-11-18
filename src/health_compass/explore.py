@@ -22,6 +22,8 @@ def main() -> None:
         # DuckDB says where the UI is, or that it's already running (on another database).
         started = db.sql("CALL start_ui()").fetchall()
         print(f"{path}: {started[0][0]}")
+        # Each browser notebook gets its own connection, which starts in the in-memory database.
+        print("In a new notebook, run `USE health_compass;` first.")
         try:
             input("Press Enter to stop. ")
         finally:

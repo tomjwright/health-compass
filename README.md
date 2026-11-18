@@ -61,7 +61,8 @@ https://dbeaver.io/download): New Database Connection → DuckDB, choose
 `data/health_compass.duckdb`, and add the driver property `access_mode` = `READ_ONLY`. On Windows,
 close it before running the transform, which can't replace a file another program has open.
 
-Or `python -m health_compass.explore` opens the database as a SQL notebook in your browser at
+Or `python -m health_compass.explore` opens the database as a SQL notebook (run
+`USE health_compass;` first in each new notebook) in your browser at
 http://localhost:4213, using the project's own DuckDB, so there's nothing else to install. It
 opens the file read-only, so the API and a build can run at the same time, and it keeps showing
 the file it opened: restart it after a build to see the new data.
