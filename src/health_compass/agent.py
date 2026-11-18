@@ -279,7 +279,7 @@ class TrialAgent:
 @DBOS.workflow()
 def answer_question(question: str, latitude: float, longitude: float) -> Answer:
     """`TrialAgent.ask` as a durable run. DBOS saves the question, location and each step's result
-    until the run is deleted: `api.py` deletes it once the answer is collected, or after 10 minutes.
+    until `api.py` deletes the run, after RUN_TTL_MINUTES (60 by default).
     """
     return TrialAgent(chat_model(), judge_model()).ask(question, latitude, longitude)
 

@@ -182,7 +182,7 @@ def collect(api: TestClient, run_id: str) -> httpx.Response:
     raise AssertionError("the run did not finish")
 
 
-def test_ask_endpoint_answers_then_deletes_the_run(
+def test_ask_endpoint_answers_and_keeps_the_answer_until_the_run_expires(
     monkeypatch: pytest.MonkeyPatch, api: TestClient
 ) -> None:
     monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH, GOOD))
@@ -190,9 +190,8 @@ def test_ask_endpoint_answers_then_deletes_the_run(
     body = collect(api, run_id).json()
     assert body["answer"]["outcome"] == "answered"
     assert body["steps_done"] == ["check_input", "find_trials", "write_answer", "check_output"]
-    # Collecting the answer deleted the run, and the question and location saved with it.
-    assert api.get(f"/ask/{run_id}").status_code == 404
-    assert DBOS.list_workflows(workflow_ids=[run_id]) == []
+    # Reading the answer again (say, after a refresh) still works.
+    assert api.get(f"/ask/{run_id}").json()["answer"]["outcome"] == "answered"
 
 
 def test_ask_says_when_the_tables_are_not_built(
@@ -203,16 +202,15 @@ def test_ask_says_when_the_tables_are_not_built(
     assert collect(api, start(api)).status_code == 503
 
 
-def test_runs_nobody_collects_are_deleted_after_ten_minutes(
-    monkeypatch: pytest.MonkeyPatch, api: TestClient
-) -> None:
+def test_runs_are_deleted_after_an_hour(monkeypatch: pytest.MonkeyPatch, api: TestClient) -> None:
     monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH, GOOD))
     run_id = start(api)
     DBOS.retrieve_workflow(run_id).get_result()
     delete_old_runs(datetime.now(UTC))
     assert len(DBOS.list_workflows(workflow_ids=[run_id])) == 1
-    delete_old_runs(datetime.now(UTC) + timedelta(minutes=11))
+    delete_old_runs(datetime.now(UTC) + timedelta(minutes=61))
     assert DBOS.list_workflows(workflow_ids=[run_id]) == []
+    assert api.get(f"/ask/{run_id}").status_code == 404
 
 
 def test_a_resumed_run_does_not_ask_the_llm_again_for_finished_steps(

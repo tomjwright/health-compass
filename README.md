@@ -136,8 +136,7 @@ curl -s localhost:8000/ask/5f0c...   # "running" with steps_done so far, then "d
 
 Each run is a durable DBOS workflow, and each step below is a DBOS step saved in Postgres. If the
 API stops mid-run, it resumes the run from its last finished step when it starts again. The run,
-including the question and location, is deleted when its answer is collected, or after 10
-minutes if nobody collects it.
+including the question, location and answer, is deleted after `RUN_TTL_MINUTES` (60 by default).
 
 - **`check_input` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
   and anything that isn't a trial search, get a fixed refusal (`"outcome": "refused"`).

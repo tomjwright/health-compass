@@ -25,8 +25,8 @@ setup_tracing("health-compass-api")
 log = logging.getLogger(__name__)
 
 NOT_BUILT = "The trial tables haven't been built yet."
-# How long an uncollected run (with its question and location) is kept before it is deleted.
-RUN_TTL = timedelta(minutes=10)
+# How long a run (with its question, location and answer) is kept before it is deleted.
+RUN_TTL = timedelta(minutes=int(os.environ.get("RUN_TTL_MINUTES", "60")))
 
 
 @asynccontextmanager
@@ -85,15 +85,14 @@ def ask(question: Question) -> Run:
 
 @app.get("/ask/{run_id}")
 def ask_result(run_id: str) -> Run:
-    """The run's progress, then its answer. Collecting the answer deletes the run."""
+    """The run's progress, then its answer, until the run is deleted after RUN_TTL."""
     runs = DBOS.list_workflows(workflow_ids=[run_id], name=answer_question.__qualname__)
     if not runs:
-        raise HTTPException(404, "No such run: it may have been collected or expired.")
+        raise HTTPException(404, "No such run: it may have expired.")
     run = runs[0]
     done = steps_done(run_id)
     if run.status in ("PENDING", "ENQUEUED"):
         return Run(run_id=run_id, status="running", steps_done=done)
-    DBOS.delete_workflow(run_id)
     if run.status == "SUCCESS":
         return Run(run_id=run_id, status="done", steps_done=done, answer=run.output)
     if isinstance(run.error, trials.TablesNotBuiltError):
@@ -112,7 +111,7 @@ def steps_done(run_id: str) -> list[str]:
 
 
 def delete_old_runs(now: datetime) -> None:
-    """Deletes runs nobody collected, with their question and location, once older than RUN_TTL."""
+    """Deletes runs, with their question, location and answer, once older than RUN_TTL."""
     cutoff = (now - RUN_TTL).isoformat()
     name = answer_question.__qualname__
     old = DBOS.list_workflows(name=name, end_time=cutoff, load_input=False, load_output=False)
