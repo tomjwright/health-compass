@@ -28,7 +28,8 @@ docker compose up -d                      # Postgres (DBOS, LangGraph) + Jaeger 
 uv run --env-file .env uvicorn health_compass.api:app --reload
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials [--max-pages N]
 uv run python -m health_compass.ingest.clinicaltrials --accept-schema   # after a schema change
-uv run --env-file .env python -m health_compass.ingest.approvals   # openFDA + EMA, once a day
+uv run --env-file .env python -m health_compass.ingest.openfda   # US approvals and labels, once a day
+uv run --env-file .env python -m health_compass.ingest.ema       # EU medicines, once a day
 uv run --env-file .env python -m health_compass.transform   # dbt build into data/health_compass.duckdb
 uv run --env-file .env python -m health_compass.transform --full-refresh   # replay every raw load
 ```

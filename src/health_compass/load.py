@@ -4,8 +4,8 @@ Trials: each new load folder adds one row to `raw.clinicaltrials_loads` and one 
 `raw.clinicaltrials_studies`. Loads already in the tables are skipped, so both tables only grow.
 Pages are inserted one at a time: a full load is about 900 MB of JSON, too much to read at once.
 
-Approvals: each load is a full copy of every approval, so the approval tables hold only the newest
-complete load, replacing the one before.
+openFDA and EMA: each load is a full copy of every record, so their tables hold only the
+newest complete load, replacing the one before.
 """
 
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import duckdb
 
-from health_compass.ingest import approvals
+from health_compass.ingest import common
 from health_compass.ingest.clinicaltrials import raw_dir
 
 log = logging.getLogger(__name__)
@@ -28,8 +28,9 @@ create table if not exists raw.clinicaltrials_loads (
 create table if not exists raw.clinicaltrials_studies (
     load_id varchar not null, study json not null
 );
-create table if not exists raw.approval_loads (
-    load_id varchar primary key, loaded_at timestamp, fda_export_date date
+create table if not exists raw.snapshot_loads (
+    source varchar not null, load_id varchar not null, loaded_at timestamp,
+    primary key (source, load_id)
 );
 create table if not exists raw.fda_applications (
     load_id varchar not null, application json not null
@@ -38,11 +39,11 @@ create table if not exists raw.fda_labels (load_id varchar not null, label json 
 create table if not exists raw.ema_medicines (load_id varchar not null, medicine json not null);
 """
 
-# Each approvals table, and the files (in the load's folder) its rows come from.
-APPROVAL_FILES = {
-    "fda_applications": "fda-applications-*.jsonl.gz",
-    "fda_labels": "fda-labels-*.jsonl.gz",
-    "ema_medicines": "ema-medicines.jsonl.gz",
+# The sources that send a full copy each time: each source's tables, and the files (in the
+# load's folder) each table's rows come from.
+SNAPSHOTS = {
+    "openfda": {"fda_applications": "applications-*.jsonl.gz", "fda_labels": "labels-*.jsonl.gz"},
+    "ema": {"ema_medicines": "medicines.jsonl.gz"},
 }
 
 INSERT_STUDIES = """
@@ -82,28 +83,32 @@ def load_raw(database: Path) -> None:
             )
             db.commit()
             log.info("loaded %s into the raw tables", load_id)
-        load_approvals(db)
+        for source, tables in SNAPSHOTS.items():
+            load_snapshot(db, source, tables)
 
 
-def load_approvals(db: duckdb.DuckDBPyConnection) -> None:
-    manifests = sorted(approvals.raw_dir().glob("*/manifest.json"))
+def load_snapshot(db: duckdb.DuckDBPyConnection, source: str, tables: dict[str, str]) -> None:
+    """Replace the source's tables with its newest complete load, if not loaded yet."""
+    manifests = sorted(common.raw_dir(source).glob("*/manifest.json"))
     if not manifests:
         return
     newest = manifests[-1].parent
-    loaded = db.execute("select 1 from raw.approval_loads where load_id = ?", [newest.name])
+    loaded = db.execute(
+        "select 1 from raw.snapshot_loads where source = ? and load_id = ?", [source, newest.name]
+    )
     if loaded.fetchone():
         return
     manifest = json.loads((newest / "manifest.json").read_text())
     db.begin()
-    for table, files in APPROVAL_FILES.items():
+    for table, files in tables.items():
         db.execute(f"delete from raw.{table}")  # noqa: S608 (fixed table names)
         db.execute(
             f"insert into raw.{table} select ?, json from read_ndjson_objects(?)",  # noqa: S608
             [newest.name, str(newest / files)],
         )
     db.execute(
-        "insert into raw.approval_loads values (?, ?, ?)",
-        [newest.name, manifest["loaded_at"], manifest["fda_export_date"]],
+        "insert into raw.snapshot_loads values (?, ?, ?)",
+        [source, newest.name, manifest["loaded_at"]],
     )
     db.commit()
-    log.info("loaded approvals %s into the raw tables", newest.name)
+    log.info("loaded %s %s into the raw tables", source, newest.name)

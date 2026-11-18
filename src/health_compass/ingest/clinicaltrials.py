@@ -25,13 +25,12 @@ import httpx
 from dbos import DBOS, SetWorkflowID
 from opentelemetry import trace
 
+from health_compass.ingest.common import MAX_ATTEMPTS, write_manifest
 from health_compass.ingest.schema_check import compare, flatten
 from health_compass.telemetry import setup_logging, setup_tracing
 
 API = "https://clinicaltrials.gov/api/v2"
 PAGE_SIZE = 1000
-# How many times to try each request before giving up (a 503 or dropped connection is often brief).
-MAX_ATTEMPTS = 3
 SCHEMA_SNAPSHOT = Path(__file__).with_name("clinicaltrials_schema.json")
 
 log = logging.getLogger(__name__)
@@ -95,14 +94,6 @@ def save_page(
 def start_run() -> tuple[str, str]:
     """Pick the run folder and load time once, so a resumed or forked run keeps both."""
     return str(raw_dir() / str(DBOS.workflow_id)), datetime.now(UTC).isoformat()
-
-
-@DBOS.step()
-def write_manifest(run_dir: str, manifest: dict[str, Any]) -> None:
-    # Written to a temporary file, then renamed, so a crash never leaves half a manifest.
-    path = Path(run_dir) / "manifest.json"
-    path.with_suffix(".tmp").write_text(json.dumps(manifest, indent=2))
-    path.with_suffix(".tmp").replace(path)
 
 
 def check_schema() -> None:

@@ -36,7 +36,7 @@ models:
       - { name: locations, data_type: "json[]" }
 
   - name: stg_fda__products
-    description: One row per brand in an FDA drug application, from the newest approvals load.
+    description: One row per brand in an FDA drug application, from the newest openFDA load.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments: { combination_of_columns: [application_number, brand_name] }
@@ -49,7 +49,7 @@ models:
       - { name: approved_on, data_type: date }
 
   - name: stg_fda__labels
-    description: One row per FDA drug label per application it names, from the newest approvals load.
+    description: One row per FDA drug label per application it names, from the newest openFDA load.
     columns:
       - { name: set_id, data_type: varchar }
       - { name: effective_on, data_type: date }
@@ -58,7 +58,7 @@ models:
       - { name: indications, data_type: varchar }
 
   - name: stg_ema__medicines
-    description: One row per medicine for people that EMA has assessed, from the newest approvals load.
+    description: One row per medicine for people that EMA has assessed, from the newest EMA load.
     columns:
       - { name: ema_product_number, data_type: varchar, constraints: [{ type: not_null }], data_tests: [unique] }
       - { name: medicine_name, data_type: varchar }

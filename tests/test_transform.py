@@ -8,7 +8,7 @@ import duckdb
 import pytest
 
 from health_compass import transform
-from health_compass.ingest import approvals
+from health_compass.ingest import common
 
 FULL_STUDY = {
     "protocolSection": {
@@ -161,9 +161,17 @@ def test_stops_on_a_complete_load_with_no_pages() -> None:
         transform.build()
 
 
-def save_approvals(name: str) -> None:
-    run_dir = approvals.raw_dir() / name
+def save_snapshot(source: str, day: str, files: dict[str, list[dict[str, Any]]]) -> None:
+    run_dir = common.raw_dir(source) / f"{source}-{day}"
     run_dir.mkdir(parents=True)
+    for file, records in files.items():
+        lines = "".join(json.dumps(record) + "\n" for record in records)
+        (run_dir / file).write_bytes(gzip.compress(lines.encode()))
+    manifest = {"loaded_at": f"{day}T09:00:00", "complete": True}
+    (run_dir / "manifest.json").write_text(json.dumps(manifest))
+
+
+def save_approvals(day: str) -> None:
     application = {
         "application_number": "NDA018154",
         "sponsor_name": "PFIZER",
@@ -208,27 +216,17 @@ def save_approvals(name: str) -> None:
         "orphan_medicine": "No",
         "therapeutic_area_mesh": "Hypertension, Pulmonary;Erectile Dysfunction",
     }
-    files = {
-        "fda-applications-01.jsonl.gz": [application],
-        "fda-labels-01.jsonl.gz": labels,
-        "ema-medicines.jsonl.gz": [medicine],
-    }
-    for file, records in files.items():
-        lines = "".join(json.dumps(record) + "\n" for record in records)
-        (run_dir / file).write_bytes(gzip.compress(lines.encode()))
-    manifest = {
-        "loaded_at": "2026-11-17T09:00:00",
-        "fda_export_date": "2026-11-17",
-        "complete": True,
-    }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest))
+    save_snapshot(
+        "openfda", day, {"applications-01.jsonl.gz": [application], "labels-01.jsonl.gz": labels}
+    )
+    save_snapshot("ema", day, {"medicines.jsonl.gz": [medicine]})
 
 
 def test_builds_the_approvals_from_the_newest_load() -> None:
     save_load("2026-11-16", [BARE_STUDY])
-    save_approvals("approvals-2026-11-16")
+    save_approvals("2026-11-16")
     transform.build()
-    save_approvals("approvals-2026-11-17")
+    save_approvals("2026-11-17")
     transform.build()  # replaces the first approvals load rather than adding to it
 
     assert query(
