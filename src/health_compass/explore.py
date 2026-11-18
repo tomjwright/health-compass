@@ -14,7 +14,11 @@ from health_compass.transform import warehouse_path
 
 def main() -> None:
     path = warehouse_path()
-    with duckdb.connect(str(path), read_only=True) as db:
+    # The UI saves its notebooks in a database of its own, which it can't create if the whole
+    # connection is read-only. So DuckDB runs in memory, with only our file attached read-only.
+    with duckdb.connect() as db:
+        db.execute("ATTACH ? AS health_compass (READ_ONLY)", [str(path)])
+        db.sql("USE health_compass")
         db.sql("CALL start_ui()")
         input(f"{path} is open at http://localhost:4213. Press Enter to stop. ")
         db.sql("CALL stop_ui_server()")
