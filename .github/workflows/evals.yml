@@ -3,6 +3,7 @@ name: Evals
 # The release gate: runs the agent on evals/cases.yaml with the real LLM, and fails when any
 # score drops below its threshold. Make "evals" a required check so a failing change can't merge.
 # It runs on every PR: a required check that a path filter skips stays pending and blocks merging.
+# A PR that only changes text files passes straight away, without calling the LLM.
 on:
   pull_request:
   push:
@@ -16,9 +17,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Skip when only text files changed
+        id: changes
+        run: |
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          if [ "${{ github.event_name }}" = "pull_request" ] && ! echo "$changed" | grep -qvE '\.(md|txt|rst)$'; then
+            echo "Only text files changed, so no LLM calls are needed."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: astral-sh/setup-uv@v3
+        if: steps.changes.outputs.skip != 'true'
       - run: uv sync --frozen
+        if: steps.changes.outputs.skip != 'true'
       - name: Run the evals
+        if: steps.changes.outputs.skip != 'true'
         run: |
           if [ -z "$GOOGLE_API_KEY" ]; then
             echo "::error::Add GOOGLE_API_KEY under Settings > Secrets and variables > Actions."
@@ -28,7 +42,7 @@ jobs:
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.changes.outputs.skip != 'true'
         with:
           name: eval-results
           path: data/eval_results.json
