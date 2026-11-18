@@ -19,9 +19,13 @@ def main() -> None:
     with duckdb.connect() as db:
         db.execute("ATTACH ? AS health_compass (READ_ONLY)", [str(path)])
         db.sql("USE health_compass")
-        db.sql("CALL start_ui()")
-        input(f"{path} is open at http://localhost:4213. Press Enter to stop. ")
-        db.sql("CALL stop_ui_server()")
+        # DuckDB says where the UI is, or that it's already running (on another database).
+        started = db.sql("CALL start_ui()").fetchall()
+        print(f"{path}: {started[0][0]}")
+        try:
+            input("Press Enter to stop. ")
+        finally:
+            db.sql("CALL stop_ui_server()")
 
 
 if __name__ == "__main__":
