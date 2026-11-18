@@ -9,7 +9,8 @@ secrets) live in his home repo, `tomjwright/home`. Rules for this repo:
 - Prefer plain SQL in dbt over data wrangling in Python.
 - Answers must come only from cited evidence; never add personal dosing or "you should take X"
   output, and never weaken a check or an eval threshold to make a test pass.
-- Never store users' health details or locations; strip personal details before tracing.
+- Never store users' health details or locations, except in a durable `/ask` run, which is
+  deleted after `RUN_TTL_MINUTES` (60 by default). Strip personal details before tracing.
 - `.env` is git-ignored; CI reads GitHub secrets.
 
 ## Checks

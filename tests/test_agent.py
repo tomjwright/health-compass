@@ -1,15 +1,20 @@
 import re
+import time
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+from dbos import DBOS
 from fastapi.testclient import TestClient
 from test_api import SINGAPORE, site, trial
 from test_transform import save_load
 
 from health_compass import agent, transform
 from health_compass.agent import Draft, Intake, TrialAgent, TrialNote
-from health_compass.api import app
+from health_compass.api import app, delete_old_runs
 from health_compass.judge import NoteVerdict, Verdicts
 
 
@@ -144,14 +149,6 @@ def test_shows_only_the_trials_when_both_drafts_fail_the_checks() -> None:
     ]
 
 
-def test_ask_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("health_compass.api.chat_model", lambda: FakeModel(SEARCH, GOOD))
-    monkeypatch.setattr("health_compass.api.judge_model", ApprovingJudge)
-    response = TestClient(app).post("/ask", json={"question": "Hair loss trials?", **SINGAPORE})
-    assert response.status_code == 200
-    assert response.json()["outcome"] == "answered"
-
-
 def test_hides_model_output_when_the_llm_fails() -> None:
     model = FakeModel("not an Intake: my hair loss question")
     with pytest.raises(agent.AgentError) as raised:
@@ -160,11 +157,77 @@ def test_hides_model_output_when_the_llm_fails() -> None:
     assert raised.value.__suppress_context__
 
 
+@pytest.fixture
+def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[TestClient]:
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/dbos.sqlite")
+    monkeypatch.setattr("health_compass.agent.judge_model", ApprovingJudge)
+    with TestClient(app) as client:
+        yield client
+
+
+def start(api: TestClient) -> str:
+    started = api.post("/ask", json={"question": "Hair loss trials?", **SINGAPORE})
+    assert started.status_code == 202
+    run_id: str = started.json()["run_id"]
+    return run_id
+
+
+def collect(api: TestClient, run_id: str) -> httpx.Response:
+    """Polls GET /ask/{run_id} until the run has finished."""
+    for _ in range(100):
+        response = api.get(f"/ask/{run_id}")
+        if response.status_code != 200 or response.json()["status"] == "done":
+            return response
+        time.sleep(0.1)
+    raise AssertionError("the run did not finish")
+
+
+def test_ask_endpoint_answers_and_keeps_the_answer_until_the_run_expires(
+    monkeypatch: pytest.MonkeyPatch, api: TestClient
+) -> None:
+    monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH, GOOD))
+    run_id = start(api)
+    body = collect(api, run_id).json()
+    assert body["answer"]["outcome"] == "answered"
+    assert body["steps_done"] == ["check_input", "find_trials", "write_answer", "check_output"]
+    # Reading the answer again (say, after a refresh) still works.
+    assert api.get(f"/ask/{run_id}").json()["answer"]["outcome"] == "answered"
+
+
 def test_ask_says_when_the_tables_are_not_built(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, api: TestClient
 ) -> None:
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "missing.duckdb"))
-    monkeypatch.setattr("health_compass.api.chat_model", lambda: FakeModel(SEARCH))
-    monkeypatch.setattr("health_compass.api.judge_model", ApprovingJudge)
-    response = TestClient(app).post("/ask", json={"question": "Hair loss trials?", **SINGAPORE})
-    assert response.status_code == 503
+    monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH))
+    assert collect(api, start(api)).status_code == 503
+
+
+def test_runs_are_deleted_after_an_hour(monkeypatch: pytest.MonkeyPatch, api: TestClient) -> None:
+    monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH, GOOD))
+    run_id = start(api)
+    DBOS.retrieve_workflow(run_id).get_result()
+    delete_old_runs(datetime.now(UTC))
+    assert len(DBOS.list_workflows(workflow_ids=[run_id])) == 1
+    delete_old_runs(datetime.now(UTC) + timedelta(minutes=61))
+    assert DBOS.list_workflows(workflow_ids=[run_id]) == []
+    assert api.get(f"/ask/{run_id}").status_code == 404
+
+
+def test_a_resumed_run_does_not_ask_the_llm_again_for_finished_steps(
+    monkeypatch: pytest.MonkeyPatch, api: TestClient
+) -> None:
+    model = FakeModel(SEARCH, GOOD, GOOD)
+    monkeypatch.setattr("health_compass.agent.chat_model", lambda: model)
+    run_id = start(api)
+    DBOS.retrieve_workflow(run_id).get_result()
+    assert len(model.prompts) == 2
+    # Restart the run from write_answer: DBOS replays the steps before it from their saved
+    # results, as it does when it resumes a run after a crash.
+    write_answer = 0
+    for step in DBOS.list_workflow_steps(run_id):
+        if step["function_name"].endswith("write_answer"):
+            write_answer = step["function_id"]
+    answer = DBOS.fork_workflow(run_id, write_answer).get_result()
+    assert answer.outcome == "answered"
+    assert len(model.prompts) == 3
+    assert "Trials:" in model.prompts[-1]

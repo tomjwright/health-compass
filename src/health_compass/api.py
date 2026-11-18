@@ -3,14 +3,21 @@
 Run it with: uv run --env-file .env uvicorn health_compass.api:app --reload
 """
 
+import asyncio
 import logging
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 
+from dbos import DBOS
 from fastapi import FastAPI, HTTPException
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel, Field
 
 from health_compass import trials
-from health_compass.agent import Answer, TrialAgent, chat_model, judge_model
+from health_compass.agent import Answer, answer_question
 from health_compass.telemetry import setup_logging, setup_tracing
 
 setup_logging()
@@ -18,8 +25,22 @@ setup_tracing("health-compass-api")
 log = logging.getLogger(__name__)
 
 NOT_BUILT = "The trial tables haven't been built yet."
+# How long a run (with its question, location and answer) is kept before it is deleted.
+RUN_TTL = timedelta(minutes=int(os.environ.get("RUN_TTL_MINUTES", "60")))
 
-app = FastAPI(title="Health Compass")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Launching DBOS also resumes any run that was cut off when the API last stopped.
+    DBOS(config={"name": "health-compass", "system_database_url": os.environ["DATABASE_URL"]})
+    DBOS.launch()
+    cleanup = asyncio.create_task(delete_old_runs_every_minute())
+    yield
+    cleanup.cancel()
+    DBOS.destroy()
+
+
+app = FastAPI(title="Health Compass", lifespan=lifespan)
 FastAPIInstrumentor.instrument_app(app)
 
 
@@ -46,12 +67,64 @@ class Question(BaseModel):
     longitude: float = Field(ge=-180, le=180, examples=[103.85])
 
 
-@app.post("/ask")
-def ask(question: Question) -> Answer:
-    """Answers a question about trials near the user, through the checks in `agent.py`."""
-    try:
-        return TrialAgent(chat_model(), judge_model()).ask(
-            question.question, question.latitude, question.longitude
-        )
-    except trials.TablesNotBuiltError:
-        raise HTTPException(503, NOT_BUILT) from None
+class Run(BaseModel):
+    run_id: str
+    status: Literal["running", "done"]
+    steps_done: list[str]
+    answer: Answer | None = None
+
+
+@app.post("/ask", status_code=202)
+def ask(question: Question) -> Run:
+    """Starts answering a question about trials near the user; GET /ask/{run_id} has the answer."""
+    handle = DBOS.start_workflow(
+        answer_question, question.question, question.latitude, question.longitude
+    )
+    return Run(run_id=handle.workflow_id, status="running", steps_done=[])
+
+
+@app.get("/ask/{run_id}")
+def ask_result(run_id: str) -> Run:
+    """The run's progress, then its answer, until the run is deleted after RUN_TTL."""
+    runs = DBOS.list_workflows(workflow_ids=[run_id], name=answer_question.__qualname__)
+    if not runs:
+        raise HTTPException(404, "No such run: it may have expired.")
+    run = runs[0]
+    done = steps_done(run_id)
+    if run.status in ("PENDING", "ENQUEUED"):
+        return Run(run_id=run_id, status="running", steps_done=done)
+    if run.status == "SUCCESS":
+        return Run(run_id=run_id, status="done", steps_done=done, answer=run.output)
+    if isinstance(run.error, trials.TablesNotBuiltError):
+        raise HTTPException(503, NOT_BUILT)
+    raise HTTPException(500, "The agent failed.")
+
+
+def steps_done(run_id: str) -> list[str]:
+    """The agent's steps that have run so far, in order, e.g. ["check_input", "find_trials"]."""
+    done = []
+    for step in DBOS.list_workflow_steps(run_id, load_output=False):
+        name = step["function_name"].split(".")[-1]
+        if name not in done:
+            done.append(name)
+    return done
+
+
+def delete_old_runs(now: datetime) -> None:
+    """Deletes runs, with their question, location and answer, once older than RUN_TTL."""
+    cutoff = (now - RUN_TTL).isoformat()
+    name = answer_question.__qualname__
+    old = DBOS.list_workflows(name=name, end_time=cutoff, load_input=False, load_output=False)
+    for run in old:
+        DBOS.delete_workflow(run.workflow_id)
+
+
+async def delete_old_runs_every_minute() -> None:
+    # A plain task in each API process, not a DBOS schedule: the ingestion CLI shares the DBOS
+    # database, and a schedule's runs could go to it, which doesn't have this function.
+    while True:
+        try:
+            await asyncio.to_thread(delete_old_runs, datetime.now(UTC))
+        except Exception:
+            log.exception("could not delete old runs")
+        await asyncio.sleep(60)

@@ -125,12 +125,18 @@ build.
 
 `POST /ask` answers a question about trials near you through a LangGraph agent
 (`src/health_compass/agent.py`). Put a free Gemini key from https://aistudio.google.com/apikey in
-`.env` as `GOOGLE_API_KEY`.
+`.env` as `GOOGLE_API_KEY`. The API needs Postgres (`docker compose up -d`) for durable runs.
 
 ```bash
 curl -s localhost:8000/ask -H 'content-type: application/json' \
   -d '{"question": "Any hair loss trials near me?", "latitude": 1.29, "longitude": 103.85}'
+# {"run_id": "5f0c...", "status": "running", "steps_done": [], "answer": null}
+curl -s localhost:8000/ask/5f0c...   # "running" with steps_done so far, then "done" with the answer
 ```
+
+Each run is a durable DBOS workflow, and each step below is a DBOS step saved in Postgres. If the
+API stops mid-run, it resumes the run from its last finished step when it starts again. The run,
+including the question, location and answer, is deleted after `RUN_TTL_MINUTES` (60 by default).
 
 - **`check_input` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
   and anything that isn't a trial search, get a fixed refusal (`"outcome": "refused"`).
