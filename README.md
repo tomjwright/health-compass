@@ -134,8 +134,10 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
 
 - **`check_input` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
   and anything that isn't a trial search, get a fixed refusal (`"outcome": "refused"`).
-- **`find_trials`:** the same SQL as `/trials`, for the condition the LLM named ("hair loss"
-  becomes "alopecia").
+- **`find_trials`:** the same SQL as `/trials`, for the condition's official MeSH heading, which
+  the LLM names ("hair loss" becomes "Alopecia", "T2DM" becomes "Diabetes Mellitus, Type 2").
+  Trials store MeSH headings next to the sponsor's own wording, so this finds trials however
+  the user put it.
 - **`write_answer`:** the LLM writes a summary and one note per trial. It sees each trial's ID,
   title and status, never the location.
 - **`check_output` (gateway):** every note must cite a trial that was found, with no doses or
@@ -153,7 +155,7 @@ The free Gemini tier may use questions to improve Google's products.
 uv run --env-file .env python -m health_compass.evals
 ```
 
-This asks the agent the 15 questions in `evals/cases.yaml`, from Singapore, about 30 real trials
+This asks the agent the 16 questions in `evals/cases.yaml`, from Singapore, about 30 real trials
 saved in `evals/trials.json.gz`, so every run searches the same data. It takes about 2 minutes,
 prints each case, writes `data/eval_results.json`, and fails if a score is below its threshold:
 - **`outcome_accuracy`:** the share of questions with the expected outcome (answered, refused or
