@@ -1,0 +1,34 @@
+name: Evals
+
+# The release gate: runs the agent on evals/cases.yaml with the real LLM, and fails when any
+# score drops below its threshold. Make "evals" a required check so a failing change can't merge.
+# It runs on every PR: a required check that a path filter skips stays pending and blocks merging.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - name: Run the evals
+        run: |
+          if [ -z "$GOOGLE_API_KEY" ]; then
+            echo "::error::Add GOOGLE_API_KEY under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          uv run python -m health_compass.evals
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: data/eval_results.json
