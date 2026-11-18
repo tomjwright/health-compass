@@ -34,3 +34,40 @@ models:
       - { name: condition_meshes, data_type: "json[]", description: "MeSH terms: [{id, term}]." }
       - { name: interventions, data_type: "json[]" }
       - { name: locations, data_type: "json[]" }
+
+  - name: stg_fda__products
+    description: One row per brand in an FDA drug application, from the newest openFDA load.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: [application_number, brand_name] }
+    columns:
+      - { name: application_number, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: sponsor_name, data_type: varchar }
+      - { name: brand_name, data_type: varchar }
+      - { name: active_substance, data_type: varchar }
+      - { name: marketing_statuses, data_type: "varchar[]" }
+      - { name: approved_on, data_type: date }
+
+  - name: stg_fda__labels
+    description: One row per FDA drug label per application it names, from the newest openFDA load.
+    columns:
+      - { name: set_id, data_type: varchar }
+      - { name: effective_on, data_type: date }
+      - { name: application_number, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: brand_names, data_type: "varchar[]" }
+      - { name: indications, data_type: varchar }
+
+  - name: stg_ema__medicines
+    description: One row per medicine for people that EMA has assessed, from the newest EMA load.
+    columns:
+      - { name: ema_product_number, data_type: varchar, constraints: [{ type: not_null }], data_tests: [unique] }
+      - { name: medicine_name, data_type: varchar }
+      - { name: active_substance, data_type: varchar }
+      - { name: holder, data_type: varchar }
+      - { name: medicine_status, data_type: varchar }
+      - { name: authorised_on, data_type: date }
+      - { name: is_conditional, data_type: boolean }
+      - { name: is_orphan, data_type: boolean }
+      - { name: therapeutic_areas, data_type: varchar }
+      - { name: indications, data_type: varchar }
+      - { name: source_url, data_type: varchar }

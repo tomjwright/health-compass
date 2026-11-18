@@ -8,6 +8,7 @@ import duckdb
 import pytest
 
 from health_compass import transform
+from health_compass.ingest import common
 
 FULL_STUDY = {
     "protocolSection": {
@@ -158,3 +159,93 @@ def test_stops_on_a_complete_load_with_no_pages() -> None:
     (transform.raw_dir() / "2026-11-17" / "page-00001.json.gz").unlink()
     with pytest.raises(SystemExit, match="has no pages"):
         transform.build()
+
+
+def save_snapshot(source: str, day: str, files: dict[str, list[dict[str, Any]]]) -> None:
+    run_dir = common.raw_dir(source) / f"{source}-{day}"
+    run_dir.mkdir(parents=True)
+    for file, records in files.items():
+        lines = "".join(json.dumps(record) + "\n" for record in records)
+        (run_dir / file).write_bytes(gzip.compress(lines.encode()))
+    manifest = {"loaded_at": f"{day}T09:00:00", "complete": True}
+    (run_dir / "manifest.json").write_text(json.dumps(manifest))
+
+
+def save_approvals(day: str) -> None:
+    application = {
+        "application_number": "NDA018154",
+        "sponsor_name": "PFIZER",
+        "products": [
+            {
+                "brand_name": "LONITEN",
+                "marketing_status": "Prescription",
+                "active_ingredients": [{"name": "MINOXIDIL", "strength": "2.5MG"}],
+            },
+            {
+                "brand_name": "LONITEN PLUS",
+                "marketing_status": "Discontinued",
+                "active_ingredients": [{"name": "MINOXIDIL"}, {"name": "RESERPINE"}],
+            },
+        ],
+        "submissions": [
+            {
+                "submission_type": "SUPPL",
+                "submission_status": "AP",
+                "submission_status_date": "20200101",
+            },
+            {
+                "submission_type": "ORIG",
+                "submission_status": "AP",
+                "submission_status_date": "19790812",
+            },
+        ],
+    }
+    labels = [
+        {"set_id": "old", "effective_time": "20190101", "indications_and_usage": ["Old text"]},
+        {"set_id": "new", "effective_time": "20251008", "indications_and_usage": ["Hypertension"]},
+    ]
+    for label in labels:
+        label["openfda"] = {"application_number": ["NDA018154"], "brand_name": ["Loniten"]}
+    medicine = {
+        "ema_product_number": "EMEA/H/C/004297",
+        "name_of_medicine": "Talmanco",
+        "active_substance": "Tadalafil",
+        "medicine_status": "Authorised",
+        "marketing_authorisation_date": "09/01/2017",
+        "conditional_approval": "No",
+        "orphan_medicine": "No",
+        "therapeutic_area_mesh": "Hypertension, Pulmonary;Erectile Dysfunction",
+    }
+    save_snapshot(
+        "openfda", day, {"applications-01.jsonl.gz": [application], "labels-01.jsonl.gz": labels}
+    )
+    save_snapshot("ema", day, {"medicines.jsonl.gz": [medicine]})
+
+
+def test_builds_the_approvals_from_the_newest_load() -> None:
+    save_load("2026-11-16", [BARE_STUDY])
+    save_approvals("2026-11-16")
+    transform.build()
+    save_approvals("2026-11-17")
+    transform.build()  # replaces the first approvals load rather than adding to it
+
+    assert query(
+        "select region, approval_id, medicine_name, active_substance, status, approved_on,"
+        " indications from marts.fct_approvals order by 1 desc, 3"
+    ) == [
+        ("US", "NDA018154", "LONITEN", "minoxidil", "Marketed", date(1979, 8, 12), "Hypertension"),
+        (
+            "US",
+            "NDA018154",
+            "LONITEN PLUS",
+            "minoxidil / reserpine",
+            "Discontinued",
+            date(1979, 8, 12),
+            None,  # its application has two brands and no label names this one
+        ),
+        ("EU", "EMEA/H/C/004297", "Talmanco", "tadalafil", "Authorised", date(2017, 1, 9), None),
+    ]
+    assert query("select condition_name from marts.bridge_approval_conditions order by 1") == [
+        ("Erectile Dysfunction",),
+        ("Hypertension, Pulmonary",),
+    ]

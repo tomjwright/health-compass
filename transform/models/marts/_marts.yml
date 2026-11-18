@@ -181,3 +181,28 @@ models:
         data_tests: [not_null, { relationships: { arguments: { to: ref('dim_dates'), field: date_day } } }]
       - { name: from_status, data_type: varchar, data_tests: [not_null] }
       - { name: to_status, data_type: varchar, data_tests: [not_null] }
+
+  - name: fct_approvals
+    description: >-
+      One row per drug approval: a brand in an FDA application (region US; an application can
+      cover several brands) or an EMA medicine (region EU).
+      Search medicine_name, active_substance or indications with ilike. Doses are never included.
+    columns:
+      - { name: approval_key, data_type: varchar, constraints: [{ type: not_null }, { type: primary_key }], data_tests: [unique] }
+      - { name: region, data_type: varchar, data_tests: [{ accepted_values: { arguments: { values: [US, EU] } } }] }
+      - { name: approval_id, data_type: varchar, description: "FDA application number (e.g. NDA020834) or EMA product number (e.g. EMEA/H/C/004297)." }
+      - { name: medicine_name, data_type: varchar }
+      - { name: active_substance, data_type: varchar, description: Lower case; combinations are joined with " / ". }
+      - { name: holder, data_type: varchar, description: The company that holds the approval. }
+      - { name: status, data_type: varchar, description: "US: Marketed, Tentative approval or Discontinued. EU: EMA's status, e.g. Authorised, Withdrawn, Refused." }
+      - { name: approved_on, data_type: date, description: "US: the original approval. EU: the marketing authorisation." }
+      - { name: is_conditional, data_type: boolean, description: EU only. }
+      - { name: is_orphan, data_type: boolean, description: EU only. }
+      - { name: indications, data_type: varchar, description: "What it's approved for: the newest FDA label's text, or EMA's therapeutic indication." }
+      - { name: source_url, data_type: varchar, description: The approval's page at the FDA or EMA. }
+
+  - name: bridge_approval_conditions
+    description: One row per EU approval per MeSH heading it's approved for. Join to fct_approvals on approval_key.
+    columns:
+      - { name: approval_key, data_type: varchar, constraints: [{ type: not_null }], data_tests: [{ relationships: { arguments: { to: ref('fct_approvals'), field: approval_key } } }] }
+      - { name: condition_name, data_type: varchar, constraints: [{ type: not_null }] }

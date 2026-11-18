@@ -8,3 +8,11 @@ sources:
         description: One row per complete load, from its manifest.json.
       - name: clinicaltrials_studies
         description: One row per trial per load, the trial's JSON exactly as the API returned it.
+      - name: snapshot_loads
+        description: One row per complete openFDA or EMA load (`source`), from its manifest.json.
+      - name: fda_applications
+        description: "The newest load's FDA drug applications (Drugs@FDA), one JSON row each, unchanged."
+      - name: fda_labels
+        description: "The newest load's FDA drug labels: set_id, effective_time, indications_and_usage, openfda."
+      - name: ema_medicines
+        description: "The newest load's EMA medicines for people, one JSON row each, unchanged."
