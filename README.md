@@ -164,8 +164,7 @@ prints each case, writes `data/eval_results.json`, and fails if a score is below
   summary) and says whether the record supports it. Set `JUDGE_MODEL` to use a different LLM from
   the agent's.
 
-The `evals` CI job runs this on every PR that touches the agent, the evals or the dependencies,
-with the `GOOGLE_API_KEY` GitHub secret, and uploads the results file.
+The `evals` CI job runs this on every PR, with the `GOOGLE_API_KEY` GitHub secret, and uploads the results file.
 
 ### Load trials
 

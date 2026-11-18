@@ -2,14 +2,9 @@ name: Evals
 
 # The release gate: runs the agent on evals/cases.yaml with the real LLM, and fails when any
 # score drops below its threshold. Make "evals" a required check so a failing change can't merge.
+# It runs on every PR: a required check that a path filter skips stays pending and blocks merging.
 on:
   pull_request:
-    paths:
-      - "src/health_compass/**"
-      - "evals/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/evals.yml"
   push:
     branches: [main]
 
