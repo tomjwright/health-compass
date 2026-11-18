@@ -1,6 +1,8 @@
 {{ config(materialized='view') }}
 
--- One row per FDA drug application. Strengths are left out: answers never mention doses.
+-- One row per brand in an FDA drug application. An application can cover several brands with
+-- different ingredients (NAQUA, NAQUIVAL) or statuses (DARANIDE discontinued, KEVEYIS marketed),
+-- so each brand keeps its own. Strengths are left out: answers never mention doses.
 with applications as (
     select
         application ->> 'application_number' as application_number,
@@ -15,21 +17,22 @@ products as (
     from applications
 ),
 
-product_summary as (
+brands as (
     select
         application_number,
-        min(product ->> 'brand_name') as brand_name,
+        product ->> 'brand_name' as brand_name,
         list(distinct product ->> 'marketing_status' order by product ->> 'marketing_status') as marketing_statuses
     from products
-    group by application_number
+    group by application_number, brand_name
 ),
 
 ingredients as (
     select
         application_number,
+        product ->> 'brand_name' as brand_name,
         string_agg(distinct lower(ingredient ->> 'name'), ' / ' order by lower(ingredient ->> 'name')) as active_substance
     from products, unnest(cast(product -> 'active_ingredients' as json[])) as t (ingredient)
-    group by application_number
+    group by application_number, brand_name
 ),
 
 -- The original application's approval ("ORIG", status "AP"), not later supplements.
@@ -44,7 +47,7 @@ original_approvals as (
 )
 
 select application_number, sponsor_name, brand_name, active_substance, marketing_statuses, approved_on
-from applications
-left join product_summary using (application_number)
-left join ingredients using (application_number)
+from brands
+join applications using (application_number)
+left join ingredients using (application_number, brand_name)
 left join original_approvals using (application_number)

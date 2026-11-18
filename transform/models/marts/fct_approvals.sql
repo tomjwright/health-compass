@@ -1,4 +1,4 @@
--- One row per approval: an FDA application (US) or an EMA medicine (EU).
+-- One row per approval: a brand in an FDA application (US) or an EMA medicine (EU).
 with us_labels as (
     -- Many labels can name one application; the newest says what it's for now.
     select application_number, indications
@@ -24,7 +24,7 @@ us as (
         indications,
         'https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo='
         || regexp_extract(application_number, '[0-9]+') as source_url
-    from {{ ref('stg_fda__applications') }}
+    from {{ ref('stg_fda__products') }}
     left join us_labels using (application_number)
 ),
 
@@ -44,7 +44,7 @@ eu as (
     from {{ ref('stg_ema__medicines') }}
 )
 
-select {{ dbt_utils.generate_surrogate_key(['region', 'approval_id']) }} as approval_key, *
+select {{ dbt_utils.generate_surrogate_key(['region', 'approval_id', 'medicine_name']) }} as approval_key, *
 from (
     select * from us
     union all by name

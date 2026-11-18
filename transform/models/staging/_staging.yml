@@ -35,10 +35,13 @@ models:
       - { name: interventions, data_type: "json[]" }
       - { name: locations, data_type: "json[]" }
 
-  - name: stg_fda__applications
-    description: One row per FDA drug application, from the newest approvals load.
+  - name: stg_fda__products
+    description: One row per brand in an FDA drug application, from the newest approvals load.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: [application_number, brand_name] }
     columns:
-      - { name: application_number, data_type: varchar, constraints: [{ type: not_null }], data_tests: [unique] }
+      - { name: application_number, data_type: varchar, constraints: [{ type: not_null }] }
       - { name: sponsor_name, data_type: varchar }
       - { name: brand_name, data_type: varchar }
       - { name: active_substance, data_type: varchar }

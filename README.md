@@ -265,7 +265,7 @@ those tables as sources, in three layers. The newest approvals load replaces the
 | `dim_conditions` + `bridge_trial_conditions` | condition, as the sponsor wrote it or as a MeSH term |
 | `dim_interventions` + `bridge_trial_interventions` | drug, device, procedure, ... |
 | `dim_sponsors`, `dim_dates` | lead sponsor, day |
-| `fct_approvals` | drug approval: an FDA application (`region = 'US'`) or EMA medicine (`'EU'`), with its status, approval date and indications |
+| `fct_approvals` | drug approval: a brand in an FDA application (`region = 'US'`) or EMA medicine (`'EU'`), with its status, approval date and indications |
 | `bridge_approval_conditions` | EU approval per MeSH heading it's approved for |
 
 Facts and bridges join to dimensions on `*_key` columns (hashes made by `dbt_utils`). Staging and

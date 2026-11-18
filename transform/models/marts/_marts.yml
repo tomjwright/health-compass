@@ -184,7 +184,8 @@ models:
 
   - name: fct_approvals
     description: >-
-      One row per drug approval: an FDA application (region US) or an EMA medicine (region EU).
+      One row per drug approval: a brand in an FDA application (region US; an application can
+      cover several brands) or an EMA medicine (region EU).
       Search medicine_name, active_substance or indications with ilike. Doses are never included.
     columns:
       - { name: approval_key, data_type: varchar, constraints: [{ type: not_null }, { type: primary_key }], data_tests: [unique] }

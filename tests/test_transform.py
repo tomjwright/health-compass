@@ -172,7 +172,12 @@ def save_approvals(name: str) -> None:
                 "brand_name": "LONITEN",
                 "marketing_status": "Prescription",
                 "active_ingredients": [{"name": "MINOXIDIL", "strength": "2.5MG"}],
-            }
+            },
+            {
+                "brand_name": "LONITEN PLUS",
+                "marketing_status": "Discontinued",
+                "active_ingredients": [{"name": "MINOXIDIL"}, {"name": "RESERPINE"}],
+            },
         ],
         "submissions": [
             {
@@ -228,9 +233,18 @@ def test_builds_the_approvals_from_the_newest_load() -> None:
 
     assert query(
         "select region, approval_id, medicine_name, active_substance, status, approved_on,"
-        " indications from marts.fct_approvals order by 1 desc"
+        " indications from marts.fct_approvals order by 1 desc, 3"
     ) == [
         ("US", "NDA018154", "LONITEN", "minoxidil", "Marketed", date(1979, 8, 12), "Hypertension"),
+        (
+            "US",
+            "NDA018154",
+            "LONITEN PLUS",
+            "minoxidil / reserpine",
+            "Discontinued",
+            date(1979, 8, 12),
+            "Hypertension",
+        ),
         ("EU", "EMEA/H/C/004297", "Talmanco", "tadalafil", "Authorised", date(2017, 1, 9), None),
     ]
     assert query("select condition_name from marts.bridge_approval_conditions order by 1") == [
