@@ -57,7 +57,9 @@ http://localhost:16686 (service `health-compass-api`).
 
 The easiest way is a database app such as DBeaver Community (free, from
 https://dbeaver.io/download): New Database Connection → DuckDB, choose
-`data/health_compass.duckdb`, and add the driver property `access_mode` = `READ_ONLY`. On Windows,
+`data/health_compass.duckdb`, and add the driver property `duckdb.read_only` = `true`. Leave
+DBeaver's own "Read-only connection" box unticked: DuckDB's driver can't switch to read-only after
+connecting, so DBeaver fails with "Can't change read-only status on connection level". On Windows,
 close it before running the transform, which can't replace a file another program has open.
 
 
