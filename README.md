@@ -121,6 +121,32 @@ The query is plain SQL in `src/health_compass/find_trials.sql`. The distance com
 haversine formula. Each request opens its own read-only DuckDB connection, so it reads the latest
 build.
 
+### Ask the agent
+
+`POST /ask` answers a question about trials near you through a LangGraph agent
+(`src/health_compass/agent.py`). Put a free Gemini key from https://aistudio.google.com/apikey in
+`.env` as `GOOGLE_API_KEY`.
+
+```bash
+curl -s localhost:8000/ask -H 'content-type: application/json' \
+  -d '{"question": "Any hair loss trials near me?", "latitude": 1.29, "longitude": 103.85}'
+```
+
+- **`check_input` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
+  and anything that isn't a trial search, get a fixed refusal (`"outcome": "refused"`).
+- **`find_trials`:** the same SQL as `/trials`, for the condition the LLM named ("hair loss"
+  becomes "alopecia").
+- **`write_answer`:** the LLM writes a summary and one note per trial. It sees each trial's ID,
+  title and status, never the location.
+- **`check_output` (gateway):** every note must cite a trial that was found, with no doses or
+  advice. A failed draft is rewritten once with the reasons; if it fails again, the trials are
+  shown without notes (`"outcome": "trials_only"`).
+
+Status, site and distance always come from the tables, not the LLM. To use another model, set
+`LLM_MODEL` in `.env` (e.g. `anthropic:claude-haiku-4-5`) and `uv add` its LangChain package
+(`langchain-anthropic`). Each node is a span in Jaeger; the question and location are never logged.
+The free Gemini tier may use questions to improve Google's products.
+
 ### Load trials
 
 ```bash

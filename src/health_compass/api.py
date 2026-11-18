@@ -4,22 +4,20 @@ Run it with: uv run --env-file .env uvicorn health_compass.api:app --reload
 """
 
 import logging
-from datetime import datetime
-from pathlib import Path
 
-import duckdb
 from fastapi import FastAPI, HTTPException
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel, Field
 
+from health_compass import trials
+from health_compass.agent import Answer, TrialAgent, chat_model
 from health_compass.telemetry import setup_logging, setup_tracing
-from health_compass.transform import warehouse_path
 
 setup_logging()
 setup_tracing("health-compass-api")
 log = logging.getLogger(__name__)
 
-FIND_TRIALS = (Path(__file__).parent / "find_trials.sql").read_text()
+NOT_BUILT = "The trial tables haven't been built yet."
 
 app = FastAPI(title="Health Compass")
 FastAPIInstrumentor.instrument_app(app)
@@ -31,51 +29,29 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-class TrialSearch(BaseModel):
-    """What the user is looking for. Sent as a POST body, so it stays out of URLs and traces."""
+@app.post("/trials")
+def find_trials(search: trials.TrialSearch) -> trials.TrialResults:
+    """Trials for a condition, nearest first, recruiting ones before those that have stopped."""
+    try:
+        return trials.find_trials(search)
+    except trials.TablesNotBuiltError:
+        raise HTTPException(503, NOT_BUILT) from None
 
-    condition: str = Field(min_length=2, max_length=100, examples=["alopecia"])
+
+class Question(BaseModel):
+    """A question in the user's words. The location comes from the app, never from the LLM."""
+
+    question: str = Field(min_length=3, max_length=500, examples=["Any alopecia trials near me?"])
     latitude: float = Field(ge=-90, le=90, examples=[1.29])
     longitude: float = Field(ge=-180, le=180, examples=[103.85])
-    limit: int = Field(default=20, ge=1, le=100)
 
 
-class Trial(BaseModel):
-    """A trial at its nearest recruiting site, or its nearest site if none is recruiting.
-
-    `is_recruiting` is false once the trial has stopped; `site_status` is that site's own status.
-    """
-
-    nct_id: str
-    title: str | None
-    overall_status: str
-    is_recruiting: bool
-    facility: str | None
-    city: str | None
-    country: str | None
-    site_status: str | None
-    distance_km: float
-
-
-class TrialResults(BaseModel):
-    data_as_of: datetime
-    trials: list[Trial]
-
-
-@app.post("/trials")
-def find_trials(search: TrialSearch) -> TrialResults:
-    """Trials for a condition, nearest first, recruiting ones before those that have stopped."""
-    database = warehouse_path()
-    if not database.exists():
-        raise HTTPException(503, "The trial tables haven't been built yet.")
-    # A new read-only connection per request, so each request reads the latest build.
-    with duckdb.connect(str(database), read_only=True) as db:
-        rows = db.execute(FIND_TRIALS, search.model_dump()).fetchall()
-        names = [column[0] for column in db.description]
-        [(data_as_of,)] = db.execute(
-            "select max(data_timestamp) from staging.stg_clinicaltrials__loads"
-        ).fetchall()
-    # The search itself is health and location data, so only the count is logged.
-    log.info("found %d trials", len(rows))
-    trials = [Trial(**dict(zip(names, row, strict=True))) for row in rows]
-    return TrialResults(data_as_of=data_as_of, trials=trials)
+@app.post("/ask")
+def ask(question: Question) -> Answer:
+    """Answers a question about trials near the user, through the checks in `agent.py`."""
+    try:
+        return TrialAgent(chat_model()).ask(
+            question.question, question.latitude, question.longitude
+        )
+    except trials.TablesNotBuiltError:
+        raise HTTPException(503, NOT_BUILT) from None
