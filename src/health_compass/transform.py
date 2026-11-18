@@ -24,6 +24,7 @@ from pathlib import Path
 from opentelemetry import trace
 
 from health_compass.ingest.clinicaltrials import raw_dir
+from health_compass.ingest.common import raw_warehouse_path
 from health_compass.load import load_raw
 from health_compass.telemetry import setup_logging, setup_tracing
 
@@ -48,6 +49,8 @@ def build(full_refresh: bool = False) -> None:
     manifests = [json.loads(path.read_text()) for path in raw_dir().glob("*/manifest.json")]
     if not any(manifest["complete"] for manifest in manifests):
         raise SystemExit("No complete ClinicalTrials.gov load yet: run the ingestion first.")
+    if not raw_warehouse_path().exists():
+        raise SystemExit(f"No {raw_warehouse_path()} yet: run the openFDA and EMA ingestion first.")
     live = warehouse_path()
     new = live.with_name(live.name + ".new")
     new.unlink(missing_ok=True)  # left over from a failed build
@@ -59,9 +62,12 @@ def build(full_refresh: bool = False) -> None:
     if not installed and not dbt("deps"):
         raise SystemExit("dbt deps failed: could not install dbt_utils (see package-lock.yml).")
     load_raw(new)
+    raw = str(raw_warehouse_path().resolve())
     with tracer.start_as_current_span("dbt.build", attributes={"full_refresh": full_refresh}):
         log.info("building %s (full refresh: %s)", live, full_refresh)
-        passed = dbt("build", env=os.environ | {"DBT_DUCKDB_PATH": str(new)})
+        passed = dbt(
+            "build", env=os.environ | {"DBT_DUCKDB_PATH": str(new), "RAW_DUCKDB_PATH": raw}
+        )
     if not passed:
         raise SystemExit(f"dbt build failed, so {live} was left as it was.")
     new.replace(live)

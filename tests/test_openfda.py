@@ -1,14 +1,12 @@
-import gzip
 import io
 import json
 import zipfile
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import httpx
 import pytest
-from dbos import DBOS
 
 from health_compass.ingest import common, openfda
 
@@ -45,48 +43,36 @@ def fake_openfda(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, content=zipped(files[url.rsplit("/", 1)[1]]))
 
 
-@pytest.fixture
-def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
+@pytest.fixture(autouse=True)
+def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     transport = httpx.MockTransport(fake_openfda)
     monkeypatch.setattr(common, "http_client", lambda: httpx.Client(transport=transport))
-    monkeypatch.setenv("RAW_DATA_DIR", str(tmp_path / "raw"))
-    DBOS(config={"name": "test", "system_database_url": f"sqlite:///{tmp_path}/dbos.sqlite"})
-    DBOS.launch()
-    yield
-    DBOS.destroy(destroy_registry=False)
+    monkeypatch.setenv("RAW_DUCKDB_PATH", str(tmp_path / "raw.duckdb"))
+    monkeypatch.setenv("DLT_DATA_DIR", str(tmp_path / "dlt"))
 
 
-def read_lines(path: Path) -> list[Any]:
-    return [json.loads(line) for line in gzip.decompress(path.read_bytes()).splitlines()]
+def query(sql: str) -> list[tuple[Any, ...]]:
+    with duckdb.connect(str(common.raw_warehouse_path()), read_only=True) as db:
+        return db.execute(sql).fetchall()
 
 
-def test_saves_applications_and_label_indications_then_the_manifest(api: None) -> None:
-    manifest = openfda.run_load()
-    run_dir = common.raw_dir("openfda") / manifest["workflow_id"]
-    assert read_lines(run_dir / "applications-01.jsonl.gz") == [APPLICATION]
-    # Only labels that name an application are kept, with only the fields we use.
-    assert read_lines(run_dir / "labels-01.jsonl.gz") == [
-        {
-            "set_id": "s1",
-            "effective_time": "20251008",
-            "indications_and_usage": ["Use to regrow hair"],
-            "openfda": {
-                "application_number": ["NDA018154"],
-                "brand_name": None,
-                "generic_name": None,
-                "product_type": None,
-            },
-        }
+def test_loads_applications_unnested_and_only_linked_label_indications() -> None:
+    openfda.run_load()
+    assert query("select application_number from openfda.applications") == [("NDA018154",)]
+    assert query("select brand_name from openfda.applications__products") == [("LONITEN",)]
+    # Only labels that name an application are kept, without the fields we don't use.
+    assert query("select set_id, effective_time from openfda.labels") == [("s1", "20251008")]
+    assert query("select value from openfda.labels__indications_and_usage") == [
+        ("Use to regrow hair",)
     ]
-    assert read_lines(run_dir / "labels-02.jsonl.gz") == []
-    assert manifest["counts"] == {"applications": 1, "labels": 1}
-    assert json.loads((run_dir / "manifest.json").read_text()) == manifest
+    columns = query(
+        "select column_name from information_schema.columns where table_name = 'labels'"
+    )
+    assert ("warnings",) not in columns
 
 
-def test_running_again_the_same_day_returns_the_saved_load(
-    api: None, caplog: pytest.LogCaptureFixture
-) -> None:
-    first = openfda.run_load()
-    caplog.set_level("INFO")
-    assert openfda.run_load() == first
-    assert "already loaded openfda today" in caplog.text
+def test_a_second_load_replaces_the_first() -> None:
+    openfda.run_load()
+    openfda.run_load()
+    assert query("select count(*) from openfda.applications") == [(1,)]
+    assert query("select count(*) from openfda.applications__products") == [(1,)]

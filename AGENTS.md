@@ -35,7 +35,8 @@ uv run --env-file .env python -m health_compass.transform --full-refresh   # rep
 ```
 
 ## Architecture in one line
-Sources → DBOS ingestion workflows → raw JSON files → Python load into `raw` tables → dbt (DuckDB) → marts → LangGraph agents →
+ClinicalTrials.gov → DBOS workflow → raw JSON files → Python load into `raw` tables; openFDA, EMA → dlt → `data/raw.duckdb`;
+both → dbt (DuckDB) → marts → LangGraph agents →
 FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoint in `.env`.
 
 ## Gotchas
@@ -47,4 +48,7 @@ FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoin
   transform with `--full-refresh`, or old rows keep the old logic.
 - Readers (API, agents) open a read-only DuckDB connection per request and close it. A long-lived
   connection keeps reading the old file after a build swaps in a new one.
+- dlt only creates a column once a value for it arrives, so a test fixture (or a source) without a
+  field breaks the staging model that reads it.
+- dlt's `[duckdb]` extra pins DuckDB below 2.0; depend on `dlt` and `duckdb>=2.0` separately.
 - Steps must raise errors that can be pickled; httpx's `HTTPStatusError` can't be loaded back.

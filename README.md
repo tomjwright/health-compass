@@ -12,9 +12,9 @@ dosing advice, and it tells you what to ask your doctor.
 ## How it works
 
 ```
-ClinicalTrials.gov ─┐
-Europe PMC ─────────┤ DBOS workflows ─► raw JSON ─► dbt (DuckDB) ─► marts ─┐
-openFDA, EMA ───────┘   (durable, retried)                                   │
+ClinicalTrials.gov ─┬ DBOS workflow ─► raw JSON ─┐
+Europe PMC ─────────┘                             ├─► dbt (DuckDB) ─► marts ─┐
+openFDA, EMA ──────── dlt ─► raw.duckdb ──────────┘                          │
                                                                              ▼
 Next.js ◄── FastAPI ◄── LangGraph supervisor ─► trials / evidence / approvals agents
                           │  input check ─► specialists ─► verifier ─► output check
@@ -42,8 +42,8 @@ uv sync
 cp .env.example .env
 docker compose up -d                      # Postgres (DBOS) + Jaeger (traces)
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials: ~2 min, 225 MB
-uv run --env-file .env python -m health_compass.ingest.openfda          # US drug approvals and labels: ~1 min, 24 MB
-uv run --env-file .env python -m health_compass.ingest.ema              # EU medicines: a few seconds, 2 MB
+uv run --env-file .env python -m health_compass.ingest.openfda          # US drug approvals and labels: ~3 min
+uv run --env-file .env python -m health_compass.ingest.ema              # EU medicines: a few seconds
 uv run --env-file .env python -m health_compass.transform               # dbt build: ~1 min, ~1 GB file
 uv run --env-file .env uvicorn health_compass.api:app --reload          # the API on port 8000
 curl localhost:8000/health                # {"status":"ok"}
@@ -219,23 +219,27 @@ uv run --env-file .env python -m health_compass.ingest.openfda
 uv run --env-file .env python -m health_compass.ingest.ema
 ```
 
-Each source has its own module in `src/health_compass/ingest/` and its own DBOS workflow, which
-saves gzipped JSON lines (one record per line) under `data/raw/<source>/<source>-<date>/`, then
-writes `manifest.json`. What they share (retries, files, the manifest) is in `common.py`.
+Each source has its own module in `src/health_compass/ingest/`, which loads it with
+[dlt](https://dlthub.com/docs) into its own schema in `data/raw.duckdb` (`RAW_DUCKDB_PATH`).
+What they share (HTTP retries, the dlt pipeline, the schema contract) is in `common.py`.
 
-| Module | File | Source | Records |
+| Module | Tables | Source | Records |
 |---|---|---|---|
-| `openfda.py` | `applications-01.jsonl.gz` | [openFDA Drugs@FDA](https://open.fda.gov/apis/drug/drugsfda/): every US drug application, its products and approval history | ~29,500 |
-| `openfda.py` | `labels-NN.jsonl.gz` | [openFDA drug labels](https://open.fda.gov/apis/drug/label/): what each label says the drug is for (`indications_and_usage`) | ~75,000 |
-| `ema.py` | `medicines.jsonl.gz` | [EMA medicines report](https://www.ema.europa.eu/en/medicines/download-medicine-data): every medicine for people EMA has assessed | ~2,400 |
+| `openfda.py` | `openfda.applications` and its child tables | [openFDA Drugs@FDA](https://open.fda.gov/apis/drug/drugsfda/): every US drug application, its products and approval history | ~29,500 |
+| `openfda.py` | `openfda.labels` and its child tables | [openFDA drug labels](https://open.fda.gov/apis/drug/label/): what each label says the drug is for (`indications_and_usage`) | ~75,000 |
+| `ema.py` | `ema.medicines` | [EMA medicines report](https://www.ema.europa.eu/en/medicines/download-medicine-data): every medicine for people EMA has assessed | ~2,400 |
 
-openFDA's labels are 14 zip files of about 130 MB each. Each one is streamed record by record,
-and only labels that name an FDA application are kept, with only `set_id`, `effective_time`,
-`indications_and_usage` and a few `openfda` fields. So the openFDA run takes about a minute and
-120 MB of memory. Each file is one DBOS step, so a crash resumes from the file it was on. A run
-is named after the day it runs: running it again the same day does nothing.
-
-Each load is a full copy of every approval, so the transform keeps only the newest one.
+- **Unnesting:** dlt turns each nested list into a child table linked to its parent row by
+  `_dlt_parent_id` = `_dlt_id`, e.g. `openfda.applications__products` and
+  `openfda.applications__products__active_ingredients`, 13 tables in all. An application's
+  `openfda` block (a dozen lists of codes we don't use) is kept as one JSON column instead.
+- **Schema evolution:** dlt keeps each table's schema. New tables and columns are added; a column
+  that changes type stops the load (`SCHEMA_CONTRACT` in `common.py`). A column that only ever
+  holds nulls is not created, so dbt fails rather than reading a column that isn't there.
+- **Full copies:** each load is a full copy of every approval, so it replaces the tables.
+- **Memory:** openFDA's labels are 14 zip files of about 130 MB each. Each is streamed record by
+  record, and only labels that name an FDA application are kept, with a few fields. dlt then
+  loads small files one at a time (`.dlt/config.toml`), so the run peaks at about 520 MB.
 
 ### Build the trial tables
 
@@ -246,8 +250,8 @@ uv run --env-file .env python -m health_compass.transform
 Python loads each new complete load (its `manifest.json` says `"complete": true`) into two plain
 tables in `data/health_compass.duckdb`: `raw.clinicaltrials_loads` and `raw.clinicaltrials_studies`
 (one row per trial per load, the JSON unchanged), one page at a time. dbt only transforms, reading
-those tables as sources, in three layers. The newest openFDA and EMA loads replace the last ones
-in `raw.fda_applications`, `raw.fda_labels` and `raw.ema_medicines`. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
+those tables as sources, in three layers. dbt also attaches `data/raw.duckdb` read-only,
+for the openFDA and EMA tables. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
 `1GB`), so a full build runs on a small laptop: about 1.2 GB for the whole process.
 
 - `staging`: append-only, one row per trial per load, the raw JSON renamed and typed. Each build

@@ -1,40 +1,45 @@
-"""Land US drug approvals from openFDA as raw JSON, as a durable DBOS workflow.
+"""Load US drug approvals from openFDA into raw.duckdb with dlt.
 
-Two of openFDA's bulk downloads, saved as gzipped JSON lines (one record per line) under
-`$RAW_DATA_DIR/openfda/<workflow id>/`:
-- `applications-NN.jsonl.gz`: every FDA drug application (Drugs@FDA), with its products and
-  approval history;
-- `labels-NN.jsonl.gz`: what each drug label says the drug is for (`indications_and_usage`).
-  The labels are 14 zip files of about 130 MB each, so each one is streamed and only a few fields
-  are kept.
+Two of openFDA's bulk downloads, each a dlt resource in the `openfda` schema:
+- `applications`: every FDA drug application (Drugs@FDA). dlt unnests its lists into child
+  tables: `applications__products`, `applications__products__active_ingredients`,
+  `applications__submissions`, ... The `openfda` block is kept as JSON: it is a dozen lists of
+  codes we don't use, which would otherwise become a dozen tables.
+- `labels`: what each drug label says the drug is for (`indications_and_usage`). The labels are
+  14 zip files of about 130 MB each, so each is streamed and only a few fields are kept.
 
-Each file is one DBOS step, so a crash resumes from the file it was on. A run is named after the
-day it runs, so running again the same day returns the saved result. `manifest.json` is last.
+openFDA sends a full copy each time, so each run replaces the tables.
 
-    uv run --env-file .env python -m health_compass.ingest.openfda
+    uv run python -m health_compass.ingest.openfda
 """
 
 import logging
-import os
 import tempfile
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import dlt
 import ijson  # type: ignore[import-untyped]
-from dbos import DBOS
-from opentelemetry import trace
 
 from health_compass.ingest import common
-from health_compass.ingest.common import MAX_ATTEMPTS
-from health_compass.telemetry import setup_logging, setup_tracing
+from health_compass.telemetry import setup_logging
 
 DOWNLOADS = "https://api.fda.gov/download.json"
 LABEL_OPENFDA_FIELDS = ("application_number", "brand_name", "generic_name", "product_type")
 
 log = logging.getLogger(__name__)
-tracer = trace.get_tracer(__name__)
+
+
+def zipped_records(url: str) -> Iterator[Any]:
+    """Download one zip file and stream the records in its `results` array."""
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_path = Path(tmp) / "download.zip"
+        common.download(url, zip_path)
+        with zipfile.ZipFile(zip_path) as archive, archive.open(archive.namelist()[0]) as data:
+            # Record by record: a label file is over 1 GB of JSON.
+            yield from ijson.items(data, "results.item", use_float=True)
 
 
 def label_indications(labels: Iterator[Any]) -> Iterator[dict[str, Any]]:
@@ -51,67 +56,32 @@ def label_indications(labels: Iterator[Any]) -> Iterator[dict[str, Any]]:
         }
 
 
-@DBOS.step(retries_allowed=True, max_attempts=MAX_ATTEMPTS)
-def list_files() -> dict[str, Any]:
-    """The current bulk files: their URLs, and the date openFDA exported them."""
+@dlt.source(name="openfda", schema_contract=common.SCHEMA_CONTRACT)
+def openfda_source() -> Any:
     drug = common.get_json(DOWNLOADS)["results"]["drug"]
-    return {
-        "export_date": drug["drugsfda"]["export_date"],
-        "applications": [part["file"] for part in drug["drugsfda"]["partitions"]],
-        "labels": [part["file"] for part in drug["label"]["partitions"]],
-    }
+
+    @dlt.resource(write_disposition="replace", columns={"openfda": {"data_type": "json"}})
+    def applications() -> Iterator[Any]:
+        for part in drug["drugsfda"]["partitions"]:
+            yield from zipped_records(part["file"])
+
+    @dlt.resource(write_disposition="replace")
+    def labels() -> Iterator[Any]:
+        for part in drug["label"]["partitions"]:
+            yield from label_indications(zipped_records(part["file"]))
+
+    return applications, labels
 
 
-@DBOS.step(retries_allowed=True, max_attempts=MAX_ATTEMPTS)
-def save_file(run_dir: str, kind: str, part: int, url: str) -> int:
-    """Download one zip file and save its records as JSON lines. Returns how many."""
-    with tracer.start_as_current_span("openfda.save_file", attributes={"kind": kind}):
-        with tempfile.TemporaryDirectory() as tmp:
-            zip_path = Path(tmp) / "download.zip"
-            common.download(url, zip_path)
-            with zipfile.ZipFile(zip_path) as archive, archive.open(archive.namelist()[0]) as data:
-                # Streamed record by record: a label file is over 1 GB of JSON.
-                records = ijson.items(data, "results.item", use_float=True)
-                if kind == "labels":
-                    records = label_indications(records)
-                count = common.save_lines(Path(run_dir) / f"{kind}-{part:02d}.jsonl.gz", records)
-        log.info("saved %d %s from file %d", count, kind, part)
-        return count
-
-
-@DBOS.workflow()
-def ingest_openfda() -> dict[str, Any]:
-    with tracer.start_as_current_span("openfda.ingest"):
-        run_dir, started_at = common.start_run("openfda")
-        files = list_files()
-        counts = {}
-        for kind in ("applications", "labels"):
-            counts[kind] = 0
-            for part, url in enumerate(files[kind], start=1):
-                counts[kind] += save_file(run_dir, kind, part, url)
-        manifest = {
-            "workflow_id": DBOS.workflow_id,
-            "loaded_at": started_at,
-            "export_date": files["export_date"],
-            "counts": counts,
-            "complete": True,
-        }
-        common.write_manifest(run_dir, manifest)
-        log.info("ingested openFDA: %s", counts)
-        return manifest
-
-
-def run_load() -> dict[str, Any]:
-    return common.run_daily("openfda", ingest_openfda)
+def run_load() -> Any:
+    info = common.pipeline("openfda").run(openfda_source())
+    log.info("loaded openFDA: %s", info)
+    return info
 
 
 def main() -> None:
     setup_logging()
-    setup_tracing("health-compass-ingest")
-    DBOS(config={"name": "health-compass", "system_database_url": os.environ["DATABASE_URL"]})
-    DBOS.launch()
     run_load()
-    DBOS.destroy()
 
 
 if __name__ == "__main__":

@@ -3,51 +3,54 @@
 -- One row per brand in an FDA drug application. An application can cover several brands with
 -- different ingredients (NAQUA, NAQUIVAL) or statuses (DARANIDE discontinued, KEVEYIS marketed),
 -- so each brand keeps its own. Strengths are left out: answers never mention doses.
-with applications as (
+-- dlt links each child table to its parent row: child._dlt_parent_id = parent._dlt_id.
+with products as (
     select
-        application ->> 'application_number' as application_number,
-        application ->> 'sponsor_name' as sponsor_name,
-        cast(application -> 'products' as json[]) as products,
-        cast(application -> 'submissions' as json[]) as submissions
-    from {{ source('raw', 'fda_applications') }}
-),
-
-products as (
-    select application_number, unnest(products) as product
-    from applications
+        applications.application_number,
+        applications.sponsor_name,
+        products._dlt_id as product_id,
+        products.brand_name,
+        products.marketing_status
+    from {{ source('openfda', 'applications') }} as applications
+    join {{ source('openfda', 'applications__products') }} as products
+        on products._dlt_parent_id = applications._dlt_id
 ),
 
 brands as (
     select
         application_number,
-        product ->> 'brand_name' as brand_name,
-        list(distinct product ->> 'marketing_status' order by product ->> 'marketing_status') as marketing_statuses
+        sponsor_name,
+        brand_name,
+        list(distinct marketing_status order by marketing_status) as marketing_statuses
     from products
-    group by application_number, brand_name
+    group by application_number, sponsor_name, brand_name
 ),
 
 ingredients as (
     select
-        application_number,
-        product ->> 'brand_name' as brand_name,
-        string_agg(distinct lower(ingredient ->> 'name'), ' / ' order by lower(ingredient ->> 'name')) as active_substance
-    from products, unnest(cast(product -> 'active_ingredients' as json[])) as t (ingredient)
-    group by application_number, brand_name
+        products.application_number,
+        products.brand_name,
+        string_agg(distinct lower(ingredients.name), ' / ' order by lower(ingredients.name)) as active_substance
+    from products
+    join {{ source('openfda', 'applications__products__active_ingredients') }} as ingredients
+        on ingredients._dlt_parent_id = products.product_id
+    group by products.application_number, products.brand_name
 ),
 
 -- The original application's approval ("ORIG", status "AP"), not later supplements.
 -- A few dates carry extra digits after YYYYMMDD.
 original_approvals as (
     select
-        application_number,
-        cast(min(try_strptime(left(submission ->> 'submission_status_date', 8), '%Y%m%d')) as date) as approved_on
-    from applications, unnest(submissions) as t (submission)
-    where submission ->> 'submission_type' = 'ORIG' and submission ->> 'submission_status' = 'AP'
-    group by application_number
+        applications.application_number,
+        cast(min(try_strptime(left(submissions.submission_status_date, 8), '%Y%m%d')) as date) as approved_on
+    from {{ source('openfda', 'applications') }} as applications
+    join {{ source('openfda', 'applications__submissions') }} as submissions
+        on submissions._dlt_parent_id = applications._dlt_id
+    where submissions.submission_type = 'ORIG' and submissions.submission_status = 'AP'
+    group by applications.application_number
 )
 
 select application_number, sponsor_name, brand_name, active_substance, marketing_statuses, approved_on
 from brands
-join applications using (application_number)
 left join ingredients using (application_number, brand_name)
 left join original_approvals using (application_number)
