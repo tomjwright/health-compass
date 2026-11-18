@@ -32,19 +32,77 @@ Next.js ◄── FastAPI ◄── LangGraph supervisor ─► trials / evidenc
   scores drop; every live answer is also scored before it is shown.
 - **Privacy:** no accounts, no saved health details, and personal details are removed from traces.
 
-## Run it
+## Run it on your machine
 
-Needs [uv](https://docs.astral.sh/uv/) and Docker.
+Needs [uv](https://docs.astral.sh/uv/), Docker and the [DuckDB CLI](https://duckdb.org/docs/installation/)
+(`brew install duckdb`, or `curl https://install.duckdb.org | sh`). Use the same DuckDB version as
+the Python package, `uv run python -c "import duckdb; print(duckdb.__version__)"`, or the CLI may
+not open the file.
 
 ```bash
 uv sync
 cp .env.example .env
-docker compose up -d                      # Postgres + Jaeger
-uv run --env-file .env uvicorn health_compass.api:app --reload
+docker compose up -d                      # Postgres (DBOS) + Jaeger (traces)
+uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials: ~2 min, 225 MB
+uv run --env-file .env python -m health_compass.transform               # dbt build: ~1 min, ~1 GB file
+duckdb -readonly data/health_compass.duckdb                             # query it (see below)
+uv run --env-file .env uvicorn health_compass.api:app --reload          # the API on port 8000
 curl localhost:8000/health                # {"status":"ok"}
 ```
 
+Run the ingestion and the transform again on a later day to load only the trials updated since:
+about 1,000 trials in a few seconds. Trial history and status changes appear from this second load.
+
 Traces show up in Jaeger at http://localhost:16686 (service `health-compass-api`).
+
+### Explore the data
+
+`duckdb -readonly data/health_compass.duckdb` opens a SQL prompt, and
+`duckdb -readonly -ui data/health_compass.duckdb` opens the same database as a notebook in your
+browser at http://localhost:4213. `-readonly` lets the API and a build run at the same time. An
+open session keeps reading the file it opened, so reopen it after a build to see the new data.
+
+```sql
+-- Every table, with its columns.
+show all tables;
+
+-- Alopecia trials, nearest Singapore first.
+select t.nct_id, l.facility, l.city, t.is_recruiting
+from marts.fct_trial_sites
+join marts.dim_trials t using (trial_key)
+join marts.dim_locations l using (location_key)
+where trial_key in (
+    select trial_key
+    from marts.bridge_trial_conditions
+    join marts.dim_conditions using (condition_key)
+    where condition_name ilike '%alopecia%'
+)
+order by (l.latitude - 1.29) ^ 2 + (l.longitude - 103.85) ^ 2
+limit 3;
+
+-- Trials that stopped recruiting, latest first.
+select t.nct_id, c.changed_on, c.from_status, c.to_status
+from marts.fct_trial_status_changes c
+join marts.dim_trials t using (trial_key)
+order by c.changed_on desc, t.nct_id
+limit 10;
+
+-- Every version of the first of those trials (SCD type 2).
+select nct_id, valid_from, valid_to, is_current, overall_status, is_recruiting
+from marts.dim_trials
+where nct_id = (
+    select min(t.nct_id)
+    from marts.fct_trial_status_changes
+    join marts.dim_trials t using (trial_key)
+)
+order by valid_from;
+
+-- The bridge fans out: a trial with several alopecia conditions is counted once per condition.
+select count(*) as condition_links, count(distinct trial_key) as trials
+from marts.bridge_trial_conditions
+join marts.dim_conditions using (condition_key)
+where condition_name ilike '%alopecia%';
+```
 
 ### Find trials
 
@@ -67,8 +125,11 @@ build.
 
 ```bash
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # first run: all recruiting trials
-uv run --env-file .env python -m health_compass.ingest.clinicaltrials --max-pages 2   # quick run
+uv run --env-file .env python -m health_compass.ingest.clinicaltrials --max-pages 2   # quick test of the download
 ```
+
+A `--max-pages` run stops early, so it is marked incomplete and the transform skips it: run the
+full load once before building the tables.
 
 This is a DBOS workflow, saved step by step in Postgres. Each page of 1,000 trials is saved
 unchanged under `data/raw/clinicaltrials/<workflow id>/`, and `manifest.json` is written last.
@@ -126,23 +187,8 @@ Facts and bridges join to dimensions on `*_key` columns (hashes made by `dbt_uti
 marts have enforced contracts (column names and types), and the build runs dbt's tests: unique
 keys, and every key in a fact or bridge exists in its dimension. It builds a new file and only
 swaps it in if everything passes, so a bad load never replaces good tables. Because the raw
-tables and staging keep their rows from earlier builds, the new file starts as a copy of the live one. Query them with
-`duckdb -readonly data/health_compass.duckdb`, e.g. alopecia trials by distance from Singapore:
-
-```sql
-select t.nct_id, l.facility, l.city, t.is_recruiting
-from marts.fct_trial_sites
-join marts.dim_trials t using (trial_key)
-join marts.dim_locations l using (location_key)
-where trial_key in (
-    select trial_key
-    from marts.bridge_trial_conditions
-    join marts.dim_conditions using (condition_key)
-    where condition_name ilike '%alopecia%'
-)
-order by (l.latitude - 1.29) ^ 2 + (l.longitude - 103.85) ^ 2
-limit 3;
-```
+tables and staging keep their rows from earlier builds, the new file starts as a copy of the live
+one. See "Explore the data" above for queries.
 
 **Trial history.** A new version of a trial starts each time ClinicalTrials.gov posts an update
 (`last_updated` changes). The previous version gets `valid_to` set to that day. Use
