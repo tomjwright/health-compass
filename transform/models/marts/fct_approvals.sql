@@ -1,9 +1,21 @@
 -- One row per approval: a brand in an FDA application (US) or an EMA medicine (EU).
-with us_labels as (
-    -- Many labels can name one application; the newest says what it's for now.
-    select application_number, indications
-    from {{ ref('stg_fda__labels') }}
-    qualify row_number() over (partition by application_number order by effective_on desc, set_id) = 1
+with us_products as (
+    select *, count(*) over (partition by application_number) as brands_in_application
+    from {{ ref('stg_fda__products') }}
+),
+
+us_labelled as (
+    -- A label belongs to a brand if it names the brand, or if its application has only one brand.
+    -- Several labels can match; the newest says what the brand is for now.
+    select us_products.*, labels.indications
+    from us_products
+    left join {{ ref('stg_fda__labels') }} as labels
+        on labels.application_number = us_products.application_number
+        and (us_products.brands_in_application = 1 or list_contains(labels.brand_names, us_products.brand_name))
+    qualify row_number() over (
+        partition by us_products.application_number, us_products.brand_name
+        order by labels.effective_on desc nulls last, labels.set_id
+    ) = 1
 ),
 
 us as (
@@ -24,8 +36,7 @@ us as (
         indications,
         'https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo='
         || regexp_extract(application_number, '[0-9]+') as source_url
-    from {{ ref('stg_fda__products') }}
-    left join us_labels using (application_number)
+    from us_labelled
 ),
 
 eu as (

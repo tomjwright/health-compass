@@ -197,7 +197,7 @@ def save_approvals(name: str) -> None:
         {"set_id": "new", "effective_time": "20251008", "indications_and_usage": ["Hypertension"]},
     ]
     for label in labels:
-        label["openfda"] = {"application_number": ["NDA018154"]}
+        label["openfda"] = {"application_number": ["NDA018154"], "brand_name": ["Loniten"]}
     medicine = {
         "ema_product_number": "EMEA/H/C/004297",
         "name_of_medicine": "Talmanco",
@@ -243,7 +243,7 @@ def test_builds_the_approvals_from_the_newest_load() -> None:
             "minoxidil / reserpine",
             "Discontinued",
             date(1979, 8, 12),
-            "Hypertension",
+            None,  # its application has two brands and no label names this one
         ),
         ("EU", "EMEA/H/C/004297", "Talmanco", "tadalafil", "Authorised", date(2017, 1, 9), None),
     ]

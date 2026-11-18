@@ -54,6 +54,7 @@ models:
       - { name: set_id, data_type: varchar }
       - { name: effective_on, data_type: date }
       - { name: application_number, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: brand_names, data_type: "varchar[]" }
       - { name: indications, data_type: varchar }
 
   - name: stg_ema__medicines
