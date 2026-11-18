@@ -1,5 +1,6 @@
 import gzip
 import json
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -109,13 +110,17 @@ def test_rerun_carries_on_from_the_failed_page_once(api: FakeApi, tmp_path: Path
     assert api.requests[requests_after_success:] == [f"{clinicaltrials.API}/version"]
 
 
-def test_rerun_loads_again_only_when_newer_data_is_published(api: FakeApi) -> None:
+def test_rerun_loads_again_only_when_newer_data_is_published(
+    api: FakeApi, caplog: pytest.LogCaptureFixture
+) -> None:
     first = clinicaltrials.run_load()
+    caplog.set_level(logging.INFO)
     assert clinicaltrials.run_load() == first
+    assert "already loaded the data published at 2026-11-16T10:00:05" in caplog.text
 
     api.version = {"apiVersion": "2.0.5", "dataTimestamp": "2026-11-17T10:00:05"}
     second = clinicaltrials.run_load()
-    assert second["workflow_id"] == "clinicaltrials-2026-11-17T10:00:05"
+    assert second["workflow_id"] == "clinicaltrials-2026-11-17T10-00-05"  # no ":" for Windows
     assert second["data_timestamp"] == "2026-11-17T10:00:05"
 
 

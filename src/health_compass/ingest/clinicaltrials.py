@@ -177,13 +177,16 @@ def run_load(max_pages: int | None = None) -> dict[str, Any]:
     attempt, and after a success returns its result until newer data is published.
     """
     version = current_version()
-    base_id = f"clinicaltrials-{version['dataTimestamp']}"
+    # The ID is also the raw folder's name, and Windows doesn't allow ":" in folder names.
+    base_id = f"clinicaltrials-{version['dataTimestamp']}".replace(":", "-")
     if max_pages:
         base_id += f"-{max_pages}-pages"
     workflow_id, attempt, previous_id = base_id, 1, ""
     while (status := DBOS.get_workflow_status(workflow_id)) and status.status == "ERROR":
         previous_id, attempt = workflow_id, attempt + 1
         workflow_id = f"{base_id}-attempt-{attempt}"
+    if status and status.status == "SUCCESS":
+        log.info("already loaded the data published at %s: nothing new", version["dataTimestamp"])
     failed_steps = []
     if previous_id and not status:
         failed_steps = [step for step in DBOS.list_workflow_steps(previous_id) if step["error"]]
