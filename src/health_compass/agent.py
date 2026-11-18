@@ -212,7 +212,8 @@ class TrialAgent:
         if not problems:
             answered = [AnsweredTrial(**t.model_dump(), note=notes.get(t.nct_id)) for t in trials]
             return {"answer": Answer(outcome="answered", message=draft.summary, trials=answered)}
-        log.warning("answer failed its checks: %s", "; ".join(problems))
+        # The problems quote model output, so only their number is logged.
+        log.warning("answer failed %d checks", len(problems))
         if state["attempts"] < MAX_ANSWER_ATTEMPTS:
             return {"problems": problems}
         bare = [AnsweredTrial(**t.model_dump(), note=None) for t in trials]
