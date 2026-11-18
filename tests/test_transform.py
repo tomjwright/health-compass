@@ -75,8 +75,6 @@ def query(sql: str) -> list[tuple[Any, ...]]:
 def dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("RAW_DATA_DIR", str(tmp_path / "raw"))
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
-    monkeypatch.setenv("RAW_DUCKDB_PATH", str(tmp_path / "raw.duckdb"))
-    monkeypatch.setenv("DLT_DATA_DIR", str(tmp_path / "dlt"))
     save_approvals()
 
 
@@ -257,3 +255,14 @@ def test_builds_the_approvals_from_the_newest_load() -> None:
         ("Erectile Dysfunction",),
         ("Hypertension, Pulmonary",),
     ]
+
+
+def test_builds_the_trials_without_approvals_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("RAW_DUCKDB_PATH", str(tmp_path / "no-approvals" / "raw.duckdb"))
+    save_load("2026-11-16", [BARE_STUDY])
+    transform.build()
+    assert query("select count(*) from marts.dim_trials") == [(1,)]
+    tables = query("select table_name from duckdb_tables() where schema_name = 'marts'")
+    assert ("fct_approvals",) not in tables

@@ -14,8 +14,6 @@ MEDICINES = [{"category": "Human", "name_of_medicine": "Talmanco"}, {"category":
 def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"data": MEDICINES}))
     monkeypatch.setattr(common, "http_client", lambda: httpx.Client(transport=transport))
-    monkeypatch.setenv("RAW_DUCKDB_PATH", str(tmp_path / "raw.duckdb"))
-    monkeypatch.setenv("DLT_DATA_DIR", str(tmp_path / "dlt"))
 
 
 def query(sql: str) -> list[tuple[Any, ...]]:

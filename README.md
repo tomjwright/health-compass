@@ -236,7 +236,9 @@ What they share (HTTP retries, the dlt pipeline, the schema contract) is in `com
 - **Schema evolution:** dlt keeps each table's schema. New tables and columns are added; a column
   that changes type stops the load (`SCHEMA_CONTRACT` in `common.py`). A column that only ever
   holds nulls is not created, so dbt fails rather than reading a column that isn't there.
-- **Full copies:** each load is a full copy of every approval, so it replaces the tables.
+- **Full copies:** each load is a full copy of every approval, so it replaces the tables. dlt
+  loads into `openfda_staging` first and swaps the tables in within one transaction, so a run
+  that stops halfway leaves the previous load in place.
 - **Memory:** openFDA's labels are 14 zip files of about 130 MB each. Each is streamed record by
   record, and only labels that name an FDA application are kept, with a few fields. dlt then
   loads small files one at a time (`.dlt/config.toml`), so the run peaks at about 520 MB.
@@ -251,7 +253,7 @@ Python loads each new complete load (its `manifest.json` says `"complete": true`
 tables in `data/health_compass.duckdb`: `raw.clinicaltrials_loads` and `raw.clinicaltrials_studies`
 (one row per trial per load, the JSON unchanged), one page at a time. dbt only transforms, reading
 those tables as sources, in three layers. dbt also attaches `data/raw.duckdb` read-only,
-for the openFDA and EMA tables. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
+for the openFDA and EMA tables. Until both are loaded, the build skips the approvals tables. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
 `1GB`), so a full build runs on a small laptop: about 1.2 GB for the whole process.
 
 - `staging`: append-only, one row per trial per load, the raw JSON renamed and typed. Each build

@@ -47,8 +47,6 @@ def fake_openfda(request: httpx.Request) -> httpx.Response:
 def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     transport = httpx.MockTransport(fake_openfda)
     monkeypatch.setattr(common, "http_client", lambda: httpx.Client(transport=transport))
-    monkeypatch.setenv("RAW_DUCKDB_PATH", str(tmp_path / "raw.duckdb"))
-    monkeypatch.setenv("DLT_DATA_DIR", str(tmp_path / "dlt"))
 
 
 def query(sql: str) -> list[tuple[Any, ...]]:
