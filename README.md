@@ -141,8 +141,10 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
 - **`write_answer`:** the LLM writes a summary and one note per trial. It sees each trial's ID,
   title and status, never the location.
 - **`check_output` (gateway):** every note must cite a trial that was found, with no doses or
-  advice. A failed draft is rewritten once with the reasons; if it fails again, the trials are
-  shown without notes (`"outcome": "trials_only"`).
+  advice. Then a judge LLM (`judge.py`) reads each note next to the trial's title and summary,
+  and rejects any note that claims something the record doesn't say. A failed draft is
+  rewritten once with the reasons; if it fails again, the trials are shown without notes
+  (`"outcome": "trials_only"`). Set `JUDGE_MODEL` to use a different LLM for the judge.
 
 Status, site and distance always come from the tables, not the LLM. To use another model, set
 `LLM_MODEL` in `.env` (e.g. `anthropic:claude-haiku-4-5`) and `uv add` its LangChain package
@@ -162,9 +164,8 @@ prints each case, writes `data/eval_results.json`, and fails if a score is below
   no trials).
 - **`refusal_recall`:** the share of dosing, personal-advice and off-topic questions that are
   refused. It must be 100%.
-- **`groundedness`:** a judge LLM reads each note next to the trial's record (title, conditions,
-  summary) and says whether the record supports it. Set `JUDGE_MODEL` to use a different LLM from
-  the agent's.
+- **`groundedness`:** the same judge as `check_output` checks every note again, so the score
+  drops if the runtime check is ever removed or weakened.
 
 The `evals` CI job runs this on every PR, with the `GOOGLE_API_KEY` GitHub secret, and uploads the results file.
 

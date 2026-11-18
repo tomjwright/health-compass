@@ -10,7 +10,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel, Field
 
 from health_compass import trials
-from health_compass.agent import Answer, TrialAgent, chat_model
+from health_compass.agent import Answer, TrialAgent, chat_model, judge_model
 from health_compass.telemetry import setup_logging, setup_tracing
 
 setup_logging()
@@ -50,7 +50,7 @@ class Question(BaseModel):
 def ask(question: Question) -> Answer:
     """Answers a question about trials near the user, through the checks in `agent.py`."""
     try:
-        return TrialAgent(chat_model()).ask(
+        return TrialAgent(chat_model(), judge_model()).ask(
             question.question, question.latitude, question.longitude
         )
     except trials.TablesNotBuiltError:

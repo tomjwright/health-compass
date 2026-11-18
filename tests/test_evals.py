@@ -4,13 +4,8 @@ import pytest
 from test_agent import FakeModel
 
 from health_compass.agent import Draft, Intake, TrialNote
-from health_compass.evals import (
-    NoteVerdict,
-    Verdicts,
-    build_eval_tables,
-    failed_thresholds,
-    run_evals,
-)
+from health_compass.evals import build_eval_tables, failed_thresholds, run_evals
+from health_compass.judge import NoteVerdict, Verdicts
 
 SUITE = {
     "latitude": 1.29,
@@ -43,13 +38,20 @@ def test_scores_outcomes_refusals_and_grounded_notes(
         # The weather question is wrongly let through, and then finds no trials.
         Intake(kind="trial_search", condition="weather"),
     )
+    # The agent's own check passes both notes; the evals' second check rejects one.
     judge = FakeModel(
+        Verdicts(
+            verdicts=[
+                NoteVerdict(nct_id="NCT07368842", supported=True),
+                NoteVerdict(nct_id="NCT07536100", supported=True),
+            ]
+        ),
         Verdicts(
             verdicts=[
                 NoteVerdict(nct_id="NCT07368842", supported=True),
                 NoteVerdict(nct_id="NCT07536100", supported=False),
             ]
-        )
+        ),
     )
 
     scores, results = run_evals(model, judge, SUITE)
