@@ -109,3 +109,12 @@ def test_hides_model_output_when_the_llm_fails() -> None:
         ask(model)
     assert str(raised.value) == "the agent failed with ValidationError"
     assert raised.value.__suppress_context__
+
+
+def test_ask_says_when_the_tables_are_not_built(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "missing.duckdb"))
+    monkeypatch.setattr("health_compass.api.chat_model", lambda: FakeModel(SEARCH))
+    response = TestClient(app).post("/ask", json={"question": "Hair loss trials?", **SINGAPORE})
+    assert response.status_code == 503

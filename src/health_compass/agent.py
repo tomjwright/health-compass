@@ -22,7 +22,7 @@ from langgraph.types import RetryPolicy
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-from health_compass.trials import Trial, TrialSearch, find_trials
+from health_compass.trials import TablesNotBuiltError, Trial, TrialSearch, find_trials
 
 log = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -136,6 +136,8 @@ class TrialAgent:
                 state = self.graph.invoke(
                     {"question": question, "latitude": latitude, "longitude": longitude}
                 )
+            except TablesNotBuiltError:
+                raise
             except Exception as error:
                 # LLM errors can quote the model's output, which can repeat the question, so
                 # only the error's type reaches traces and logs.
