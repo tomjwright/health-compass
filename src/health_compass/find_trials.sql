@@ -1,4 +1,5 @@
--- Trials for a condition, each shown at its site nearest the user.
+-- Trials for a condition, each shown at its nearest recruiting site, or its nearest site if
+-- none of its sites is recruiting.
 -- Recruiting trials come first, then trials that have stopped recruiting, each nearest first.
 with matching_trials as (
     select distinct trial_key
@@ -16,6 +17,7 @@ sites as (
         l.facility,
         l.city,
         l.country,
+        fct_trial_sites.site_status,
         -- Haversine formula: the distance along the Earth's surface (radius 6,371 km).
         2 * 6371 * asin(sqrt(
             sin(radians(l.latitude - $latitude) / 2) ^ 2
@@ -30,9 +32,11 @@ sites as (
 )
 
 select
-    nct_id, title, overall_status, is_recruiting, facility, city, country,
+    nct_id, title, overall_status, is_recruiting, facility, city, country, site_status,
     round(distance_km, 1) as distance_km
 from sites
-qualify row_number() over (partition by nct_id order by distance_km) = 1
+qualify row_number() over (
+    partition by nct_id order by coalesce(site_status = 'RECRUITING', false) desc, distance_km
+) = 1
 order by is_recruiting desc, distance_km, nct_id
 limit $limit

@@ -41,7 +41,10 @@ class TrialSearch(BaseModel):
 
 
 class Trial(BaseModel):
-    """A trial at its site nearest the user. `is_recruiting` is false once it has stopped."""
+    """A trial at its nearest recruiting site, or its nearest site if none is recruiting.
+
+    `is_recruiting` is false once the trial has stopped; `site_status` is that site's own status.
+    """
 
     nct_id: str
     title: str | None
@@ -50,6 +53,7 @@ class Trial(BaseModel):
     facility: str | None
     city: str | None
     country: str | None
+    site_status: str | None
     distance_km: float
 
 
