@@ -10,5 +10,10 @@ file_max_items = 5000
 [load]
 workers = 1
 
+[destination.duckdb]
+# Load into staging tables first, then swap them in within one transaction, so a run that stops
+# halfway never leaves half-replaced tables for the next build.
+replace_strategy = "insert-from-staging"
+
 [destination.duckdb.credentials]
 global_config = { memory_limit = "1GB", threads = 2 }
