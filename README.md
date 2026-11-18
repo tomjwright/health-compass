@@ -43,7 +43,6 @@ cp .env.example .env
 docker compose up -d                      # Postgres (DBOS) + Jaeger (traces)
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials: ~2 min, 225 MB
 uv run --env-file .env python -m health_compass.transform               # dbt build: ~1 min, ~1 GB file
-uv run --env-file .env python -m health_compass.explore                # query it in your browser
 uv run --env-file .env uvicorn health_compass.api:app --reload          # the API on port 8000
 curl localhost:8000/health                # {"status":"ok"}
 ```
@@ -61,11 +60,6 @@ https://dbeaver.io/download): New Database Connection → DuckDB, choose
 `data/health_compass.duckdb`, and add the driver property `access_mode` = `READ_ONLY`. On Windows,
 close it before running the transform, which can't replace a file another program has open.
 
-Or `python -m health_compass.explore` opens the database as a SQL notebook (run
-`USE health_compass;` first in each new notebook) in your browser at
-http://localhost:4213, using the project's own DuckDB, so there's nothing else to install. It
-opens the file read-only, so the API and a build can run at the same time, and it keeps showing
-the file it opened: restart it after a build to see the new data.
 
 ```sql
 -- Every table, with its columns.
