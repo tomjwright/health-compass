@@ -21,9 +21,12 @@ jobs:
           fetch-depth: 0
       - name: Skip when only text files changed
         id: changes
+        if: github.event_name == 'pull_request'
+        # --no-renames lists a renamed file's old path too; quotePath=false keeps accented names
+        # unquoted, so the suffix check sees them as they are.
         run: |
-          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-          if [ "${{ github.event_name }}" = "pull_request" ] && ! echo "$changed" | grep -qvE '\.(md|txt|rst)$'; then
+          changed=$(git -c core.quotePath=false diff --name-only --no-renames "origin/${{ github.base_ref }}...HEAD")
+          if ! echo "$changed" | grep -qvE '\.(md|txt|rst)$'; then
             echo "Only text files changed, so no LLM calls are needed."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
