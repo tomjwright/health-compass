@@ -22,6 +22,19 @@ jobs:
       - name: Audit dependencies for known vulnerabilities
         run: uv export --frozen --no-hashes --no-emit-project | uv run pip-audit --strict -r /dev/stdin
 
+  # The code must run on any machine: these catch paths and file handling that only work on Linux.
+  test-other-os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - run: uv run pytest
+
   secrets-scan:
     runs-on: ubuntu-latest
     steps:
