@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from test_transform import save_load
 from health_compass import agent, transform
 from health_compass.agent import Draft, Intake, TrialAgent, TrialNote
 from health_compass.api import app
+from health_compass.judge import NoteVerdict, Verdicts
 
 
 class FakeModel:
@@ -24,6 +26,17 @@ class FakeModel:
     def invoke(self, messages: list[tuple[str, str]]) -> Any:
         self.prompts.append("\n".join(text for _, text in messages))
         return self.replies.pop(0)
+
+
+class ApprovingJudge(FakeModel):
+    """Stands in for the judge LLM: finds every note supported."""
+
+    def invoke(self, messages: list[tuple[str, str]]) -> Any:
+        self.prompts.append("\n".join(text for _, text in messages))
+        verdicts = []
+        for nct_id in re.findall(r"^(NCT\d{8})$", messages[-1][1], re.MULTILINE):
+            verdicts.append(NoteVerdict(nct_id=nct_id, supported=True))
+        return Verdicts(verdicts=verdicts)
 
 
 SEARCH = Intake(kind="trial_search", condition="alopecia")
@@ -48,8 +61,14 @@ def tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     transform.build()
 
 
-def ask(model: FakeModel, question: str = "Any hair loss trials near me?") -> agent.Answer:
-    return TrialAgent(model).ask(question, **SINGAPORE)
+def ask(
+    model: FakeModel,
+    question: str = "Any hair loss trials near me?",
+    judge: FakeModel | None = None,
+) -> agent.Answer:
+    if judge is None:
+        judge = ApprovingJudge()
+    return TrialAgent(model, judge).ask(question, **SINGAPORE)
 
 
 def test_answers_with_facts_from_the_tables_and_notes_from_the_llm() -> None:
@@ -85,6 +104,35 @@ def test_retries_once_when_a_draft_cites_a_trial_it_was_not_given() -> None:
     assert "NCT09999999 is not one of the trials given" in model.prompts[-1]
 
 
+def test_retries_when_the_judge_finds_a_note_its_record_does_not_support() -> None:
+    model = FakeModel(SEARCH, GOOD, GOOD)
+    rejects_one = Verdicts(
+        verdicts=[
+            NoteVerdict(nct_id="NCT00000011", supported=True),
+            NoteVerdict(nct_id="NCT00000012", supported=False),
+        ]
+    )
+    approves_both = Verdicts(
+        verdicts=[
+            NoteVerdict(nct_id="NCT00000011", supported=True),
+            NoteVerdict(nct_id="NCT00000012", supported=True),
+        ]
+    )
+    judge = FakeModel(rejects_one, approves_both)
+    answer = ask(model, judge=judge)
+    assert answer.outcome == "answered"
+    assert "the note on NCT00000012 says something its record doesn't" in model.prompts[-1]
+    # The judge sees each trial's record and the note on it, never the location.
+    assert "Title: " in judge.prompts[0] and "Note: It studies a hair serum." in judge.prompts[0]
+    assert not any("Singapore" in prompt for prompt in judge.prompts)
+
+
+def test_judge_is_not_asked_when_a_cheap_check_fails() -> None:
+    judge = ApprovingJudge()
+    ask(FakeModel(SEARCH, DOSING, INVENTED), judge=judge)
+    assert judge.prompts == []
+
+
 def test_shows_only_the_trials_when_both_drafts_fail_the_checks() -> None:
     model = FakeModel(SEARCH, DOSING, INVENTED)
     answer = ask(model)
@@ -98,6 +146,7 @@ def test_shows_only_the_trials_when_both_drafts_fail_the_checks() -> None:
 
 def test_ask_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("health_compass.api.chat_model", lambda: FakeModel(SEARCH, GOOD))
+    monkeypatch.setattr("health_compass.api.judge_model", ApprovingJudge)
     response = TestClient(app).post("/ask", json={"question": "Hair loss trials?", **SINGAPORE})
     assert response.status_code == 200
     assert response.json()["outcome"] == "answered"
@@ -116,5 +165,6 @@ def test_ask_says_when_the_tables_are_not_built(
 ) -> None:
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "missing.duckdb"))
     monkeypatch.setattr("health_compass.api.chat_model", lambda: FakeModel(SEARCH))
+    monkeypatch.setattr("health_compass.api.judge_model", ApprovingJudge)
     response = TestClient(app).post("/ask", json={"question": "Hair loss trials?", **SINGAPORE})
     assert response.status_code == 503

@@ -12,6 +12,7 @@ sites as (
     select
         t.nct_id,
         t.title,
+        t.summary,
         t.overall_status,
         t.is_recruiting,
         l.facility,
@@ -32,7 +33,7 @@ sites as (
 )
 
 select
-    nct_id, title, overall_status, is_recruiting, facility, city, country, site_status,
+    nct_id, title, summary, overall_status, is_recruiting, facility, city, country, site_status,
     round(distance_km, 1) as distance_km
 from sites
 qualify row_number() over (
