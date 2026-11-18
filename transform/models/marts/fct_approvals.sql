@@ -58,6 +58,6 @@ eu as (
 select {{ dbt_utils.generate_surrogate_key(['region', 'approval_id', 'medicine_name']) }} as approval_key, *
 from (
     select * from us
-    union all by name
+    union all
     select * from eu
 )
