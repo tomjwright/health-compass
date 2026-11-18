@@ -8,6 +8,9 @@
 The LLM only sorts the question and writes one note per trial. Python decides what is refused
 and what is shown, and every fact shown (status, site, distance) comes from the tables.
 The question goes to the LLM; the location never does, and neither is logged or traced.
+
+`answer_question` runs the agent as a durable DBOS workflow. Each node is a DBOS step, so after
+a crash a run resumes from its last finished step, without calling the LLM again for the others.
 """
 
 import logging
@@ -15,6 +18,7 @@ import os
 import re
 from typing import Literal, TypedDict
 
+from dbos import DBOS
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
@@ -161,6 +165,7 @@ class TrialAgent:
         log.info("agent outcome: %s", answer.outcome)
         return answer
 
+    @DBOS.step()
     def check_input(self, state: State) -> State:
         """Gateway: only trial searches go on; anything else gets a fixed refusal."""
         with tracer.start_as_current_span(
@@ -176,6 +181,7 @@ class TrialAgent:
         kind = "other" if intake.kind == "trial_search" else intake.kind
         return {"answer": Answer(outcome="refused", message=REFUSALS[kind], trials=[])}
 
+    @DBOS.step()
     def find_trials(self, state: State) -> State:
         with tracer.start_as_current_span("agent.find_trials") as span:
             search = TrialSearch(
@@ -191,6 +197,7 @@ class TrialAgent:
         message = f"I found no trials for {state['condition']} in the trial data."
         return {"answer": Answer(outcome="no_trials", message=message, trials=[])}
 
+    @DBOS.step()
     def write_answer(self, state: State) -> State:
         """The LLM sees each trial's ID, title and status: not its site or distance."""
         with tracer.start_as_current_span(
@@ -214,6 +221,7 @@ class TrialAgent:
             span.set_attribute("agent.attempt", attempts)
         return {"draft": draft, "attempts": attempts}
 
+    @DBOS.step()
     def check_output(self, state: State) -> State:
         """Gateway: the draft must cite only the trials found, give no doses or advice, and
         say nothing about a trial that its record doesn't (checked by the judge LLM)."""
@@ -266,6 +274,14 @@ class TrialAgent:
             return {"problems": problems}
         bare = add_notes(trials, {})
         return {"answer": Answer(outcome="trials_only", message=TRIALS_ONLY, trials=bare)}
+
+
+@DBOS.workflow()
+def answer_question(question: str, latitude: float, longitude: float) -> Answer:
+    """`TrialAgent.ask` as a durable run. DBOS saves the question, location and each step's result
+    until the run is deleted: `api.py` deletes it once the answer is collected, or after 10 minutes.
+    """
+    return TrialAgent(chat_model(), judge_model()).ask(question, latitude, longitude)
 
 
 def add_notes(trials: list[Trial], notes: dict[str, str]) -> list[AnsweredTrial]:
