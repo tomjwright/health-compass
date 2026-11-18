@@ -3,12 +3,13 @@
 Run it with: uv run --env-file .env uvicorn health_compass.api:app --reload
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
-from typing import Any, Literal
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from dbos import DBOS
 from fastapi import FastAPI, HTTPException
@@ -33,11 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Launching DBOS also resumes any run that was cut off when the API last stopped.
     DBOS(config={"name": "health-compass", "system_database_url": os.environ["DATABASE_URL"]})
     DBOS.launch()
-    if DBOS.get_schedule("delete-old-runs") is None:
-        DBOS.create_schedule(
-            schedule_name="delete-old-runs", workflow_fn=delete_old_runs, schedule="* * * * *"
-        )
+    cleanup = asyncio.create_task(delete_old_runs_every_minute())
     yield
+    cleanup.cancel()
     DBOS.destroy()
 
 
@@ -112,12 +111,21 @@ def steps_done(run_id: str) -> list[str]:
     return done
 
 
-@DBOS.workflow()
-def delete_old_runs(scheduled_at: datetime, context: Any) -> None:
-    """Deletes runs nobody collected, and this cleanup's own runs, once older than RUN_TTL."""
-    cutoff = (scheduled_at - RUN_TTL).isoformat()
-    names = [answer_question.__qualname__, delete_old_runs.__qualname__]
-    old = DBOS.list_workflows(name=names, end_time=cutoff, load_input=False, load_output=False)
+def delete_old_runs(now: datetime) -> None:
+    """Deletes runs nobody collected, with their question and location, once older than RUN_TTL."""
+    cutoff = (now - RUN_TTL).isoformat()
+    name = answer_question.__qualname__
+    old = DBOS.list_workflows(name=name, end_time=cutoff, load_input=False, load_output=False)
     for run in old:
-        if run.workflow_id != DBOS.workflow_id:
-            DBOS.delete_workflow(run.workflow_id)
+        DBOS.delete_workflow(run.workflow_id)
+
+
+async def delete_old_runs_every_minute() -> None:
+    # A plain task in each API process, not a DBOS schedule: the ingestion CLI shares the DBOS
+    # database, and a schedule's runs could go to it, which doesn't have this function.
+    while True:
+        try:
+            await asyncio.to_thread(delete_old_runs, datetime.now(UTC))
+        except Exception:
+            log.exception("could not delete old runs")
+        await asyncio.sleep(60)

@@ -209,9 +209,9 @@ def test_runs_nobody_collects_are_deleted_after_ten_minutes(
     monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH, GOOD))
     run_id = start(api)
     DBOS.retrieve_workflow(run_id).get_result()
-    delete_old_runs(datetime.now(UTC), None)
+    delete_old_runs(datetime.now(UTC))
     assert len(DBOS.list_workflows(workflow_ids=[run_id])) == 1
-    delete_old_runs(datetime.now(UTC) + timedelta(minutes=11), None)
+    delete_old_runs(datetime.now(UTC) + timedelta(minutes=11))
     assert DBOS.list_workflows(workflow_ids=[run_id]) == []
 
 
