@@ -20,6 +20,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, Field
 
 from health_compass.trials import TablesNotBuiltError, Trial, TrialSearch, find_trials
@@ -131,7 +132,9 @@ class TrialAgent:
         self.graph = graph.compile()
 
     def ask(self, question: str, latitude: float, longitude: float) -> Answer:
-        with tracer.start_as_current_span("agent.ask", record_exception=False) as span:
+        with tracer.start_as_current_span(
+            "agent.ask", record_exception=False, set_status_on_exception=False
+        ) as span:
             try:
                 state = self.graph.invoke(
                     {"question": question, "latitude": latitude, "longitude": longitude}
@@ -141,6 +144,7 @@ class TrialAgent:
             except Exception as error:
                 # LLM errors can quote the model's output, which can repeat the question, so
                 # only the error's type reaches traces and logs.
+                span.set_status(StatusCode.ERROR, type(error).__name__)
                 raise AgentError(f"the agent failed with {type(error).__name__}") from None
             answer: Answer = state["answer"]
             span.set_attribute("agent.outcome", answer.outcome)
@@ -149,7 +153,9 @@ class TrialAgent:
 
     def check_input(self, state: State) -> State:
         """Gateway: only trial searches go on; anything else gets a fixed refusal."""
-        with tracer.start_as_current_span("agent.check_input", record_exception=False) as span:
+        with tracer.start_as_current_span(
+            "agent.check_input", record_exception=False, set_status_on_exception=False
+        ) as span:
             reply = self.model.with_structured_output(Intake).invoke(
                 [("system", INTAKE_PROMPT), ("human", state["question"])]
             )
@@ -177,10 +183,13 @@ class TrialAgent:
 
     def write_answer(self, state: State) -> State:
         """The LLM sees each trial's ID, title and status: not its site or distance."""
-        with tracer.start_as_current_span("agent.write_answer", record_exception=False) as span:
-            trials = "\n".join(
-                f"{t.nct_id}: {t.title} ({t.overall_status})" for t in state["trials"]
-            )
+        with tracer.start_as_current_span(
+            "agent.write_answer", record_exception=False, set_status_on_exception=False
+        ) as span:
+            lines = []
+            for trial in state["trials"]:
+                lines.append(f"{trial.nct_id}: {trial.title} ({trial.overall_status})")
+            trials = "\n".join(lines)
             messages = [
                 ("system", ANSWER_PROMPT),
                 ("human", f"Question: {state['question']}\n\nTrials:\n{trials}"),
@@ -189,37 +198,64 @@ class TrialAgent:
                 problems = "; ".join(state["problems"])
                 messages.append(("human", f"Your last answer was rejected: {problems}. Redo it."))
             reply = self.model.with_structured_output(Draft).invoke(messages)
+            # Some providers return a dict rather than the model: validating makes it a Draft.
+            draft = Draft.model_validate(reply)
             attempts = state.get("attempts", 0) + 1
             span.set_attribute("agent.attempt", attempts)
-        return {"draft": Draft.model_validate(reply), "attempts": attempts}
+        return {"draft": draft, "attempts": attempts}
 
     def check_output(self, state: State) -> State:
         """Gateway: the draft must cite only the trials found, and give no doses or advice."""
-        draft, trials = state["draft"], state["trials"]
-        found = {t.nct_id for t in trials}
-        problems = [
-            f"{n.nct_id} is not one of the trials given"
-            for n in draft.notes
-            if n.nct_id not in found
-        ]
-        texts = [draft.summary, *(n.note for n in draft.notes)]
-        if any(DOSE.search(text) for text in texts):
+        draft = state["draft"]
+        trials = state["trials"]
+        found = set()
+        for trial in trials:
+            found.add(trial.nct_id)
+
+        problems = []
+        texts = [draft.summary]
+        notes = {}
+        for trial_note in draft.notes:
+            if trial_note.nct_id not in found:
+                problems.append(f"{trial_note.nct_id} is not one of the trials given")
+            texts.append(trial_note.note)
+            notes[trial_note.nct_id] = trial_note.note
+
+        mentions_a_dose = False
+        gives_advice = False
+        for text in texts:
+            if DOSE.search(text):
+                mentions_a_dose = True
+            if ADVICE.search(text):
+                gives_advice = True
+        if mentions_a_dose:
             problems.append("it mentions a dose")
-        if any(ADVICE.search(text) for text in texts):
+        if gives_advice:
             problems.append("it tells the user what to take")
+
         with tracer.start_as_current_span("agent.check_output") as span:
             span.set_attribute("agent.passed", not problems)
             span.set_attribute("agent.problems", len(problems))
-        notes = {n.nct_id: n.note for n in draft.notes}
+
         if not problems:
-            answered = [AnsweredTrial(**t.model_dump(), note=notes.get(t.nct_id)) for t in trials]
+            answered = add_notes(trials, notes)
             return {"answer": Answer(outcome="answered", message=draft.summary, trials=answered)}
         # The problems quote model output, so only their number is logged.
         log.warning("answer failed %d checks", len(problems))
         if state["attempts"] < MAX_ANSWER_ATTEMPTS:
             return {"problems": problems}
-        bare = [AnsweredTrial(**t.model_dump(), note=None) for t in trials]
+        bare = add_notes(trials, {})
         return {"answer": Answer(outcome="trials_only", message=TRIALS_ONLY, trials=bare)}
+
+
+def add_notes(trials: list[Trial], notes: dict[str, str]) -> list[AnsweredTrial]:
+    """Each trial as found in the tables, with the LLM's note on it, if any."""
+    answered = []
+    for trial in trials:
+        fields = trial.model_dump()
+        fields["note"] = notes.get(trial.nct_id)
+        answered.append(AnsweredTrial(**fields))
+    return answered
 
 
 def after_check_input(state: State) -> str:

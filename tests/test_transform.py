@@ -151,3 +151,10 @@ def test_needs_a_complete_load() -> None:
     save_load("2026-11-17", [FULL_STUDY], complete=False)
     with pytest.raises(SystemExit, match="No complete"):
         transform.build()
+
+
+def test_stops_on_a_complete_load_with_no_pages() -> None:
+    save_load("2026-11-17", [FULL_STUDY])
+    (transform.raw_dir() / "2026-11-17" / "page-00001.json.gz").unlink()
+    with pytest.raises(SystemExit, match="has no pages"):
+        transform.build()
