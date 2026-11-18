@@ -20,6 +20,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, Field
 
 from health_compass.trials import TablesNotBuiltError, Trial, TrialSearch, find_trials
@@ -131,7 +132,9 @@ class TrialAgent:
         self.graph = graph.compile()
 
     def ask(self, question: str, latitude: float, longitude: float) -> Answer:
-        with tracer.start_as_current_span("agent.ask", record_exception=False) as span:
+        with tracer.start_as_current_span(
+            "agent.ask", record_exception=False, set_status_on_exception=False
+        ) as span:
             try:
                 state = self.graph.invoke(
                     {"question": question, "latitude": latitude, "longitude": longitude}
@@ -141,6 +144,7 @@ class TrialAgent:
             except Exception as error:
                 # LLM errors can quote the model's output, which can repeat the question, so
                 # only the error's type reaches traces and logs.
+                span.set_status(StatusCode.ERROR, type(error).__name__)
                 raise AgentError(f"the agent failed with {type(error).__name__}") from None
             answer: Answer = state["answer"]
             span.set_attribute("agent.outcome", answer.outcome)
@@ -149,7 +153,9 @@ class TrialAgent:
 
     def check_input(self, state: State) -> State:
         """Gateway: only trial searches go on; anything else gets a fixed refusal."""
-        with tracer.start_as_current_span("agent.check_input", record_exception=False) as span:
+        with tracer.start_as_current_span(
+            "agent.check_input", record_exception=False, set_status_on_exception=False
+        ) as span:
             reply = self.model.with_structured_output(Intake).invoke(
                 [("system", INTAKE_PROMPT), ("human", state["question"])]
             )
@@ -177,7 +183,9 @@ class TrialAgent:
 
     def write_answer(self, state: State) -> State:
         """The LLM sees each trial's ID, title and status: not its site or distance."""
-        with tracer.start_as_current_span("agent.write_answer", record_exception=False) as span:
+        with tracer.start_as_current_span(
+            "agent.write_answer", record_exception=False, set_status_on_exception=False
+        ) as span:
             lines = []
             for trial in state["trials"]:
                 lines.append(f"{trial.nct_id}: {trial.title} ({trial.overall_status})")
