@@ -23,7 +23,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: uv sync --frozen
-      - run: uv run python -m health_compass.evals
+      - name: Run the evals
+        run: |
+          if [ -z "$GOOGLE_API_KEY" ]; then
+            echo "::error::Add GOOGLE_API_KEY under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          uv run python -m health_compass.evals
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       - uses: actions/upload-artifact@v4
