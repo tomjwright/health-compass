@@ -34,10 +34,8 @@ Next.js ◄── FastAPI ◄── LangGraph supervisor ─► trials / evidenc
 
 ## Run it on your machine
 
-Needs [uv](https://docs.astral.sh/uv/), Docker and the [DuckDB CLI](https://duckdb.org/docs/installation/)
-(`brew install duckdb`, or `curl https://install.duckdb.org | sh`). Use the same DuckDB version as
-the Python package, `uv run python -c "import duckdb; print(duckdb.__version__)"`, or the CLI may
-not open the file.
+Needs [uv](https://docs.astral.sh/uv/) and Docker, on Windows, macOS or Linux. The commands below
+work the same in PowerShell, bash and zsh.
 
 ```bash
 uv sync
@@ -45,7 +43,6 @@ cp .env.example .env
 docker compose up -d                      # Postgres (DBOS) + Jaeger (traces)
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials: ~2 min, 225 MB
 uv run --env-file .env python -m health_compass.transform               # dbt build: ~1 min, ~1 GB file
-duckdb -readonly data/health_compass.duckdb                             # query it (see below)
 uv run --env-file .env uvicorn health_compass.api:app --reload          # the API on port 8000
 curl localhost:8000/health                # {"status":"ok"}
 ```
@@ -53,14 +50,16 @@ curl localhost:8000/health                # {"status":"ok"}
 Run the ingestion and the transform again on a later day to load only the trials updated since:
 about 1,000 trials in a few seconds. Trial history and status changes appear from this second load.
 
-Traces show up in Jaeger at http://localhost:16686 (service `health-compass-api`).
+Try the API from your browser at http://localhost:8000/docs. Traces show up in Jaeger at
+http://localhost:16686 (service `health-compass-api`).
 
 ### Explore the data
 
-`duckdb -readonly data/health_compass.duckdb` opens a SQL prompt, and
-`duckdb -readonly -ui data/health_compass.duckdb` opens the same database as a notebook in your
-browser at http://localhost:4213. `-readonly` lets the API and a build run at the same time. An
-open session keeps reading the file it opened, so reopen it after a build to see the new data.
+The easiest way is a database app such as DBeaver Community (free, from
+https://dbeaver.io/download): New Database Connection → DuckDB, choose
+`data/health_compass.duckdb`, and add the driver property `access_mode` = `READ_ONLY`. On Windows,
+close it before running the transform, which can't replace a file another program has open.
+
 
 ```sql
 -- Every table, with its columns.
