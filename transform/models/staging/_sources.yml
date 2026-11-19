@@ -8,11 +8,24 @@ sources:
         description: One row per complete load, from its manifest.json.
       - name: clinicaltrials_studies
         description: One row per trial per load, the trial's JSON exactly as the API returned it.
-      - name: snapshot_loads
-        description: One row per complete openFDA or EMA load (`source`), from its manifest.json.
-      - name: fda_applications
-        description: "The newest load's FDA drug applications (Drugs@FDA), one JSON row each, unchanged."
-      - name: fda_labels
-        description: "The newest load's FDA drug labels: set_id, effective_time, indications_and_usage, openfda."
-      - name: ema_medicines
-        description: "The newest load's EMA medicines for people, one JSON row each, unchanged."
+
+  - name: openfda
+    description: openFDA's drug applications and labels, loaded by dlt (`health_compass.ingest.openfda`).
+    database: raw_data
+    schema: openfda
+    tables:
+      - name: applications
+      - name: applications__products
+      - name: applications__products__active_ingredients
+      - name: applications__submissions
+      - name: labels
+      - name: labels__indications_and_usage
+      - name: labels__openfda__application_number
+      - name: labels__openfda__brand_name
+
+  - name: ema
+    description: EMA's medicines for people, loaded by dlt (`health_compass.ingest.ema`).
+    database: raw_data
+    schema: ema
+    tables:
+      - name: medicines

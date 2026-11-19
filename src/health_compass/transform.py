@@ -21,9 +21,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import duckdb
 from opentelemetry import trace
 
 from health_compass.ingest.clinicaltrials import raw_dir
+from health_compass.ingest.common import raw_warehouse_path
 from health_compass.load import load_raw
 from health_compass.telemetry import setup_logging, setup_tracing
 
@@ -44,6 +46,16 @@ def dbt(*args: str, env: dict[str, str] | None = None) -> bool:
     return subprocess.run(command, env=env).returncode == 0  # noqa: S603 (fixed command)
 
 
+def approvals_loaded() -> bool:
+    """Whether dlt has loaded both openFDA and EMA into raw.duckdb. Creates an empty file if not,
+    because dbt attaches it read-only."""
+    path = raw_warehouse_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(path)) as db:
+        schemas = db.execute("select schema_name from information_schema.schemata").fetchall()
+    return ("openfda",) in schemas and ("ema",) in schemas
+
+
 def build(full_refresh: bool = False) -> None:
     manifests = [json.loads(path.read_text()) for path in raw_dir().glob("*/manifest.json")]
     if not any(manifest["complete"] for manifest in manifests):
@@ -59,9 +71,15 @@ def build(full_refresh: bool = False) -> None:
     if not installed and not dbt("deps"):
         raise SystemExit("dbt deps failed: could not install dbt_utils (see package-lock.yml).")
     load_raw(new)
+    raw = str(raw_warehouse_path().resolve())
+    command = ["build"]
+    if not approvals_loaded():
+        log.warning("no openFDA and EMA data in %s, so the approvals tables are skipped", raw)
+        command += ["--exclude", "source:openfda+", "source:ema+"]
     with tracer.start_as_current_span("dbt.build", attributes={"full_refresh": full_refresh}):
         log.info("building %s (full refresh: %s)", live, full_refresh)
-        passed = dbt("build", env=os.environ | {"DBT_DUCKDB_PATH": str(new)})
+        env = os.environ | {"DBT_DUCKDB_PATH": str(new), "RAW_DUCKDB_PATH": raw}
+        passed = dbt(*command, env=env)
     if not passed:
         raise SystemExit(f"dbt build failed, so {live} was left as it was.")
     new.replace(live)

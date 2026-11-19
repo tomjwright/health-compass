@@ -1,0 +1,19 @@
+# dlt reads this from the folder it runs in (the repo root).
+[runtime]
+log_level = "WARNING"
+
+[data_writer]
+# Small load files, loaded one at a time: DuckDB 2.0 needed 6 GB to load the labels as big files.
+buffer_max_items = 5000
+file_max_items = 5000
+
+[load]
+workers = 1
+
+[destination.duckdb]
+# Load into staging tables first, then swap them in within one transaction, so a run that stops
+# halfway never leaves half-replaced tables for the next build.
+replace_strategy = "insert-from-staging"
+
+[destination.duckdb.credentials]
+global_config = { memory_limit = "1GB", threads = 2 }

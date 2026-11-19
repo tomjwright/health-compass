@@ -4,6 +4,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import dlt
 import duckdb
 import pytest
 
@@ -74,6 +75,7 @@ def query(sql: str) -> list[tuple[Any, ...]]:
 def dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("RAW_DATA_DIR", str(tmp_path / "raw"))
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
+    save_approvals()
 
 
 def test_builds_the_star_schema_from_the_complete_loads() -> None:
@@ -161,17 +163,7 @@ def test_stops_on_a_complete_load_with_no_pages() -> None:
         transform.build()
 
 
-def save_snapshot(source: str, day: str, files: dict[str, list[dict[str, Any]]]) -> None:
-    run_dir = common.raw_dir(source) / f"{source}-{day}"
-    run_dir.mkdir(parents=True)
-    for file, records in files.items():
-        lines = "".join(json.dumps(record) + "\n" for record in records)
-        (run_dir / file).write_bytes(gzip.compress(lines.encode()))
-    manifest = {"loaded_at": f"{day}T09:00:00", "complete": True}
-    (run_dir / "manifest.json").write_text(json.dumps(manifest))
-
-
-def save_approvals(day: str) -> None:
+def save_approvals() -> None:
     application = {
         "application_number": "NDA018154",
         "sponsor_name": "PFIZER",
@@ -215,19 +207,25 @@ def save_approvals(day: str) -> None:
         "conditional_approval": "No",
         "orphan_medicine": "No",
         "therapeutic_area_mesh": "Hypertension, Pulmonary;Erectile Dysfunction",
+        "therapeutic_indication": "Treatment of pulmonary arterial hypertension",
+        "marketing_authorisation_developer_applicant_holder": "Viatris Limited",
+        "medicine_url": "https://www.ema.europa.eu/en/medicines/human/EPAR/talmanco",
     }
-    save_snapshot(
-        "openfda", day, {"applications-01.jsonl.gz": [application], "labels-01.jsonl.gz": labels}
+    openfda = [
+        dlt.resource([application], name="applications", write_disposition="replace"),
+        dlt.resource(labels, name="labels", write_disposition="replace"),
+    ]
+    common.pipeline("openfda").run(openfda)
+    common.pipeline("ema").run(
+        dlt.resource([medicine], name="medicines", write_disposition="replace")
     )
-    save_snapshot("ema", day, {"medicines.jsonl.gz": [medicine]})
 
 
 def test_builds_the_approvals_from_the_newest_load() -> None:
     save_load("2026-11-16", [BARE_STUDY])
-    save_approvals("2026-11-16")
     transform.build()
-    save_approvals("2026-11-17")
-    transform.build()  # replaces the first approvals load rather than adding to it
+    save_approvals()
+    transform.build()  # the second load replaces the first rather than adding to it
 
     assert query(
         "select region, approval_id, medicine_name, active_substance, status, approved_on,"
@@ -243,9 +241,28 @@ def test_builds_the_approvals_from_the_newest_load() -> None:
             date(1979, 8, 12),
             None,  # its application has two brands and no label names this one
         ),
-        ("EU", "EMEA/H/C/004297", "Talmanco", "tadalafil", "Authorised", date(2017, 1, 9), None),
+        (
+            "EU",
+            "EMEA/H/C/004297",
+            "Talmanco",
+            "tadalafil",
+            "Authorised",
+            date(2017, 1, 9),
+            "Treatment of pulmonary arterial hypertension",
+        ),
     ]
     assert query("select condition_name from marts.bridge_approval_conditions order by 1") == [
         ("Erectile Dysfunction",),
         ("Hypertension, Pulmonary",),
     ]
+
+
+def test_builds_the_trials_without_approvals_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("RAW_DUCKDB_PATH", str(tmp_path / "no-approvals" / "raw.duckdb"))
+    save_load("2026-11-16", [BARE_STUDY])
+    transform.build()
+    assert query("select count(*) from marts.dim_trials") == [(1,)]
+    tables = query("select table_name from duckdb_tables() where schema_name = 'marts'")
+    assert ("fct_approvals",) not in tables

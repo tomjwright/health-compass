@@ -8,3 +8,8 @@ health_compass:
       threads: 4
       settings:
         memory_limit: "{{ env_var('DUCKDB_MEMORY_LIMIT', '1GB') }}"
+      # The raw openFDA and EMA tables that dlt loads, read-only.
+      attach:
+        - path: "{{ env_var('RAW_DUCKDB_PATH', 'data/raw.duckdb') }}"
+          alias: raw_data
+          read_only: true
