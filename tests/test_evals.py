@@ -44,7 +44,7 @@ def test_scores_outcomes_refusals_and_grounded_notes(
         approval_agent.Draft(
             summary="Some medicines are approved for psoriasis. Ask your doctor about them.",
             notes=[
-                approval_agent.ApprovalNote(approval_id="NDA220149", note="For psoriasis."),
+                approval_agent.ApprovalNote(number=3, note="For psoriasis."),
             ],
         ),
     )
@@ -63,8 +63,8 @@ def test_scores_outcomes_refusals_and_grounded_notes(
             ]
         ),
         # The approval note passes both checks.
-        Verdicts(verdicts=[NoteVerdict(id="NDA220149", supported=True)]),
-        Verdicts(verdicts=[NoteVerdict(id="NDA220149", supported=True)]),
+        Verdicts(verdicts=[NoteVerdict(id="3", supported=True)]),
+        Verdicts(verdicts=[NoteVerdict(id="3", supported=True)]),
     )
 
     scores, results = run_evals(model, judge, SUITE)

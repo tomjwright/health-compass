@@ -96,11 +96,12 @@ def run_evals(
             unsupported = unsupported_notes(judge, answer.trials, trial_notes)
         elif answer.outcome == "answered" and isinstance(answer, ApprovalAnswer):
             approval_notes = {}
-            for approval in answer.approvals:
+            for number, approval in enumerate(answer.approvals, 1):
                 if approval.note is not None:
-                    approval_notes[approval.approval_id] = approval.note
+                    approval_notes[number] = approval.note
             notes += len(approval_notes)
-            unsupported = unsupported_approval_notes(judge, answer.approvals, approval_notes)
+            numbers = unsupported_approval_notes(judge, answer.approvals, approval_notes)
+            unsupported = [answer.approvals[number - 1].approval_id for number in numbers]
         unsupported_count += len(unsupported)
         result = {
             "agent": agent,
