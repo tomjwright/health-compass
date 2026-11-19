@@ -18,6 +18,8 @@ sites as (
         l.facility,
         l.city,
         l.country,
+        l.latitude,
+        l.longitude,
         fct_trial_sites.site_status,
         -- Haversine formula: the distance along the Earth's surface (radius 6,371 km).
         2 * 6371 * asin(sqrt(
@@ -34,6 +36,7 @@ sites as (
 
 select
     nct_id, title, summary, overall_status, is_recruiting, facility, city, country, site_status,
+    latitude, longitude,
     round(distance_km, 1) as distance_km
 from sites
 qualify row_number() over (
