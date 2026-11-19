@@ -2,10 +2,12 @@
 
     uv run --env-file .env python -m health_compass.evals
 
-The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, and the approvals
-are 30 real openFDA and EMA records in evals/approvals.json.gz, so every run searches the same
-data. The cases and the thresholds are in evals/cases.yaml. CI runs this as
-the release gate: a score below its threshold fails the build, so the change can't merge.
+The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, the approvals are
+30 real openFDA and EMA records in evals/approvals.json.gz, and the papers are Europe PMC's
+replies for each of those medicines, saved in evals/papers.json.gz, so every run searches the
+same data and never calls Europe PMC. The cases and the thresholds are in evals/cases.yaml. CI
+runs this as the release gate: a score below its threshold fails the build, so the change can't
+merge.
 """
 
 import gzip
@@ -14,6 +16,7 @@ import logging
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,7 @@ from health_compass import transform
 from health_compass.agent import Supervisor, chat_model, judge_model
 from health_compass.ingest import common
 from health_compass.ingest.clinicaltrials import load_studies
+from health_compass.research import PaperResults, PaperSearch
 from health_compass.telemetry import setup_logging
 
 log = logging.getLogger(__name__)
@@ -51,11 +55,20 @@ def build_eval_tables(workdir: Path) -> None:
     transform.build()
 
 
+def saved_papers(search: PaperSearch) -> PaperResults:
+    """The papers saved for the medicine, in place of a live Europe PMC search."""
+    saved = json.loads(gzip.decompress((EVALS_DIR / "papers.json.gz").read_bytes()))
+    return PaperResults(papers=saved.get(search.medicine, []))
+
+
 def run_evals(
-    model: BaseChatModel, judge: BaseChatModel, suite: dict[str, Any]
+    model: BaseChatModel,
+    judge: BaseChatModel,
+    suite: dict[str, Any],
+    find_papers: Callable[[PaperSearch], PaperResults] = saved_papers,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     """The scores, and each case's result, from asking the agent every question in the suite."""
-    supervisor = Supervisor(model, judge)
+    supervisor = Supervisor(model, judge, find_papers)
     results = []
     correct = 0
     should_refuse = 0
@@ -71,22 +84,22 @@ def run_evals(
             should_refuse += 1
             if answer.outcome == "refused":
                 refused += 1
+        # The agent's own gate already ran the judge; checking again here makes the score drop if
+        # that gate is ever removed or weakened. Every agent's notes count, whatever the outcome:
+        # research notes can follow approvals shown without notes.
         unsupported = []
-        if answer.outcome == "answered":
-            # The agent's own gate already ran the judge; checking again here makes the score
-            # drop if that gate is ever removed or weakened.
-            for agent in supervisor.agents.values():
-                records = getattr(answer, agent.name)
-                if not records:
-                    continue
-                answer_notes = {}
-                for number, record in enumerate(records, 1):
-                    if record.note is not None:
-                        answer_notes[number] = record.note
-                notes += len(answer_notes)
-                numbers = agent.judge_notes(records, answer_notes)
-                unsupported = [agent.id_of(records[number - 1]) for number in numbers]
-            unsupported_count += len(unsupported)
+        for agent in supervisor.agents.values():
+            records = getattr(answer, agent.name)
+            answer_notes = {}
+            for number, record in enumerate(records, 1):
+                if record.note is not None:
+                    answer_notes[number] = record.note
+            if not answer_notes:
+                continue
+            notes += len(answer_notes)
+            numbers = agent.judge_notes(records, answer_notes)
+            unsupported += [agent.id_of(records[number - 1]) for number in numbers]
+        unsupported_count += len(unsupported)
         result = {
             "id": case["id"],
             "expected": case["expected"],

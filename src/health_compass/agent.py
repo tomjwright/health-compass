@@ -27,7 +27,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from typing import Any, Literal, TypedDict
+from typing import Any, ClassVar, Literal, TypedDict
 
 from dbos import DBOS
 from langchain.chat_models import init_chat_model
@@ -38,6 +38,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, Field
 
+from health_compass import research
 from health_compass.approvals import (
     Approval,
     ApprovalSearch,
@@ -54,6 +55,17 @@ tracer = trace.get_tracer(__name__)
 DEFAULT_MODEL = "google_genai:gemini-3.1-flash-lite"
 MAX_TRIALS = 5
 MAX_APPROVALS = 5
+PAPERS_PER_MEDICINE = 2
+# Abstracts are about 2,300 characters; a long one is cut here.
+ABSTRACT_SHOWN = 3000
+# Salts in US active-substance names, which papers leave out ("metformin", not "metformin
+# hydrochloride").
+SALT = re.compile(
+    r"\s+(hydrochloride|hcl|sodium|potassium|calcium|phosphate|sulfate|maleate|mesylate|"
+    r"citrate|tartrate|acetate|fumarate|succinate|besylate|hydrobromide|tosilate|tosylate|"
+    r"benzoate|bromide|chloride|dipropionate|propionate|furoate|xinafoate)$",
+    re.IGNORECASE,
+)
 MAX_ANSWER_ATTEMPTS = 2
 
 REFUSALS = {
@@ -117,6 +129,19 @@ detail that isn't in the record is unsupported."""
 
 DOSE = re.compile(r"\b\d+(\.\d+)?\s?(mg|mcg|µg|ml|iu|units?)\b", re.IGNORECASE)
 ADVICE = re.compile(r"\byou should (take|start|stop|use)\b|\b(take|increase|reduce) your\b", re.I)
+RESEARCH_ANSWER_PROMPT = """You describe published research on approved medicines to a member
+of the public. Use only the papers given. Never give doses or advice on what to take, and never
+say which medicine is best. Write a one or two sentence summary of what the papers studied,
+without ranking the medicines against each other, and one plain-English sentence per paper on
+what it found, citing it by its number. A sentence may compare a medicine with placebo or with
+another treatment only as its paper does."""
+
+RESEARCH_JUDGE_PROMPT = """You check notes written about medical research papers for the public.
+Each paper comes with its title and abstract, and a note about it. A note is supported if
+everything it claims, including any comparison, is stated in, or follows directly from, the
+abstract. Plain paraphrase is fine. A note that adds a result, a benefit, a comparison or a
+detail that isn't in the abstract is unsupported."""
+
 RANKING = re.compile(
     r"\b(best|most effective|strongest|(better|safer|stronger|more effective) than|superior|"
     r"first[- ]line|preferred)\b",
@@ -168,6 +193,14 @@ class AnsweredApproval(Approval):
     note: str | None
 
 
+class MedicinePaper(research.Paper):
+    medicine: str  # the approved medicine it was found for
+
+
+class AnsweredPaper(MedicinePaper):
+    note: str | None
+
+
 class Answer(BaseModel):
     outcome: Literal[
         "answered", "refused", "no_trials", "trials_only", "no_approvals", "approvals_only"
@@ -175,6 +208,7 @@ class Answer(BaseModel):
     message: str
     trials: list[AnsweredTrial] = []
     approvals: list[AnsweredApproval] = []
+    research: list[AnsweredPaper] = []
 
 
 class State(TypedDict, total=False):
@@ -189,6 +223,7 @@ class State(TypedDict, total=False):
     problems: list[str]
     attempts: int
     answer: Answer
+    researched: bool
 
 
 # LLM calls are retried, with backoff, when the provider is briefly overloaded.
@@ -213,6 +248,7 @@ class RecordAgent:
     results_only: str  # the message when no draft passes the checks
     # Beyond the dose and advice checks: (pattern, the problem when the draft matches it).
     checks: tuple[tuple[re.Pattern[str], str], ...] = ()
+    summary_checks: tuple[tuple[re.Pattern[str], str], ...] = ()  # the same, for the summary only
     closing: str = ""  # added to every answer that lists records
 
     def __init__(self, model: BaseChatModel, judge: BaseChatModel) -> None:
@@ -231,6 +267,13 @@ class RecordAgent:
     def id_of(self, record: Any) -> str:
         raise NotImplementedError
 
+    def done(self, state: State) -> bool:
+        """Whether this agent's part of the run is over."""
+        return "answer" in state
+
+    def finish(self, state: State, answer: Answer) -> State:
+        return {"answer": answer}
+
     def graph(self) -> Any:
         find = f"find_{self.name}"
         graph = StateGraph(State)
@@ -238,12 +281,15 @@ class RecordAgent:
         graph.add_node("write_answer", self.write_answer, retry_policy=LLM_RETRY)
         graph.add_node("check_output", self.check_output, retry_policy=LLM_RETRY)
         graph.add_edge(START, find)
-        # Each gateway either sets the answer, which ends the run, or lets the run go on.
-        graph.add_conditional_edges(find, end_or("write_answer"))
+        # Each gateway either finishes the agent's part of the run, or lets it go on. A rejected
+        # draft goes back to write_answer, with the problems found.
+        graph.add_conditional_edges(find, self.end_or_write)
         graph.add_edge("write_answer", "check_output")
-        # A rejected draft goes back to write_answer, with the problems found.
-        graph.add_conditional_edges("check_output", end_or("write_answer"))
+        graph.add_conditional_edges("check_output", self.end_or_write)
         return graph.compile()
+
+    def end_or_write(self, state: State) -> str:
+        return END if self.done(state) else "write_answer"
 
     @DBOS.step()
     def write_answer(self, state: State) -> State:
@@ -291,6 +337,9 @@ class RecordAgent:
         for pattern, problem in self.checks:
             if any(pattern.search(text) for text in texts):
                 problems.append(problem)
+        for pattern, problem in self.summary_checks:
+            if pattern.search(draft.summary):
+                problems.append(problem)
 
         with tracer.start_as_current_span(
             "agent.check_output", record_exception=False, set_status_on_exception=False
@@ -306,12 +355,12 @@ class RecordAgent:
             span.set_attribute("agent.unsupported_notes", len(unsupported))
 
         if not problems:
-            return {"answer": self.answer("answered", draft.summary, records, notes)}
+            return self.finish(state, self.answer("answered", draft.summary, records, notes))
         # The problems quote model output, so only their number is logged.
         log.warning("answer failed %d checks", len(problems))
         if state["attempts"] < MAX_ANSWER_ATTEMPTS:
             return {"problems": problems}
-        return {"answer": self.answer(f"{self.name}_only", self.results_only, records, {})}
+        return self.finish(state, self.answer(f"{self.name}_only", self.results_only, records, {}))
 
     def judge_notes(self, records: list[Any], notes: dict[int, str]) -> list[int]:
         """The numbers of the notes that the judge finds their record doesn't support."""
@@ -417,23 +466,124 @@ class ApprovalAgent(RecordAgent):
         return approval.approval_id
 
 
+class ResearchAgent(RecordAgent):
+    """The newest reviews and randomised trials of each approved medicine for the condition. It
+    runs after ApprovalAgent and adds to its answer; with no papers, the answer is unchanged."""
+
+    name = "research"
+    kind = ""  # the supervisor never routes to it: it follows ApprovalAgent
+    answer_prompt = RESEARCH_ANSWER_PROMPT
+    judge_prompt = RESEARCH_JUDGE_PROMPT
+    answered = AnsweredPaper
+    results_only = ""
+    # A note may compare as its paper does (the judge checks that); the summary may not rank.
+    summary_checks = ((RANKING, "it ranks the medicines"),)
+
+    def __init__(
+        self,
+        model: BaseChatModel,
+        judge: BaseChatModel,
+        find_papers: Callable[[research.PaperSearch], research.PaperResults],
+    ) -> None:
+        super().__init__(model, judge)
+        self.find_papers = find_papers
+
+    @DBOS.step()
+    def find_research(self, state: State) -> State:
+        answer = state["answer"]
+        papers: dict[str, MedicinePaper] = {}
+        if answer.outcome in ("answered", "approvals_only"):
+            with tracer.start_as_current_span("agent.find_research") as span:
+                for medicine in medicines(answer.approvals):
+                    search = research.PaperSearch(
+                        medicine=medicine,
+                        condition=state["condition"],
+                        terms=state["terms"],
+                        limit=PAPERS_PER_MEDICINE,
+                    )
+                    try:
+                        found = self.find_papers(search).papers
+                    except research.ResearchUnavailableError:
+                        log.warning("Europe PMC couldn't be reached")
+                        break
+                    for paper in found:
+                        papers.setdefault(
+                            paper.pmid, MedicinePaper(**paper.model_dump(), medicine=medicine)
+                        )
+                span.set_attribute("agent.papers_found", len(papers))
+        if not papers:
+            return {"researched": True}
+        return {"records": list(papers.values()), "attempts": 0, "problems": []}
+
+    find = find_research
+
+    def shown_to_writer(self, paper: MedicinePaper) -> str:
+        year = paper.published_on.year if paper.published_on else "undated"
+        return (
+            f"{paper.medicine}: {paper.title} ({paper.paper_type}, {year})\n"
+            f"{paper.abstract[:ABSTRACT_SHOWN]}"
+        )
+
+    def shown_to_judge(self, paper: MedicinePaper) -> str:
+        return f"Title: {paper.title}\nAbstract: {paper.abstract[:ABSTRACT_SHOWN]}"
+
+    def id_of(self, paper: MedicinePaper) -> str:
+        return paper.pmid
+
+    def done(self, state: State) -> bool:
+        return state.get("researched", False)
+
+    def answer(
+        self, outcome: str, message: str, records: list[Any], notes: dict[int, str]
+    ) -> Answer:
+        """Just the papers, with their notes; `finish` adds them to the approvals answer."""
+        answered = []
+        for number, record in enumerate(records, 1):
+            answered.append(AnsweredPaper(**record.model_dump(), note=notes.get(number)))
+        return Answer(outcome="answered", message=message, research=answered)
+
+    def finish(self, state: State, answer: Answer) -> State:
+        """The research summary goes before the approvals' closing note, which stays last."""
+        approvals = state["answer"]
+        message = approvals.message.removesuffix(f"\n\n{LOCAL_APPROVAL}")
+        if answer.message:
+            message = f"{message}\n\n{answer.message}"
+        message = f"{message}\n\n{LOCAL_APPROVAL}"
+        update = {"message": message, "research": answer.research}
+        return {"answer": approvals.model_copy(update=update), "researched": True}
+
+
 class Supervisor:
     """Sorts the question, then hands it to the agent for its kind, or refuses it:
 
-    route ──► trials    (TrialAgent's graph) ────┐
-      ├─────► approvals (ApprovalAgent's graph) ─┴──► END
+    route ──► trials    (TrialAgent's graph) ───────────────────────────────────┐
+      ├─────► approvals (ApprovalAgent's graph) ─► research (ResearchAgent's graph) ─┴──► END
       └─────► refused
     """
 
-    def __init__(self, model: BaseChatModel, judge: BaseChatModel) -> None:
+    # Agents that run after another, adding to its answer.
+    FOLLOWED_BY: ClassVar = {"approvals": "research"}
+
+    def __init__(
+        self,
+        model: BaseChatModel,
+        judge: BaseChatModel,
+        find_papers: Callable[[research.PaperSearch], research.PaperResults] = (
+            research.find_papers
+        ),
+    ) -> None:
         self.model = model
-        agents: list[RecordAgent] = [TrialAgent(model, judge), ApprovalAgent(model, judge)]
+        agents: list[RecordAgent] = [
+            TrialAgent(model, judge),
+            ApprovalAgent(model, judge),
+            ResearchAgent(model, judge, find_papers),
+        ]
         self.agents = {agent.name: agent for agent in agents}
         graph = StateGraph(State)
         graph.add_node("route", self.route, retry_policy=LLM_RETRY)
         for name, agent in self.agents.items():
             graph.add_node(name, agent.graph())
-            graph.add_edge(name, END)
+            graph.add_edge(name, self.FOLLOWED_BY.get(name, END))
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", after_route)
         self.graph = graph.compile()
@@ -493,10 +643,16 @@ def after_route(state: State) -> str:
     return END if "answer" in state else state["agent"]
 
 
-def end_or(next_node: str) -> Callable[[State], str]:
-    """A gateway's edge: the answer, once set, ends the run; otherwise the run goes on."""
-
-    def route(state: State) -> str:
-        return END if "answer" in state else next_node
-
-    return route
+def medicines(approvals: list[AnsweredApproval]) -> list[str]:
+    """Each approval's active substance, once, as papers name it: without its salt, and only the
+    first of a combination."""
+    names: list[str] = []
+    for approval in approvals:
+        if not approval.active_substance:
+            continue
+        first = re.split(r"[;,/]| and ", approval.active_substance)[0].strip().lower()
+        # FDA adds a four-letter suffix to biologics' names, e.g. "omalizumab-igec".
+        name = SALT.sub("", re.sub(r"-[a-z]{4}$", "", first))[:100]
+        if len(name) >= 2 and name not in names:
+            names.append(name)
+    return names
