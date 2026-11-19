@@ -201,9 +201,10 @@ including the question, location and answer, is deleted after `RUN_TTL_MINUTES` 
 
 The agent is one LangGraph graph (`agent.py`). The `Supervisor`'s `route` step hands each question
 to the agent for its kind, `TrialAgent` or `ApprovalAgent`, whose own graph is a node of the
-supervisor's. Agents that find records and write a note on each (`RecordAgent`) share the
-`write_answer` and `check_output` steps, and set only their search, prompts and how a record is
-shown.
+supervisor's. `ResearchAgent` runs after `ApprovalAgent` and adds research on the approved
+medicines to its answer. Agents that find records and write a note on each (`RecordAgent`) share
+the `write_answer` and `check_output` steps, and set only their search, prompts and how a record
+is shown.
 
 - **`route` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
   and anything that isn't a trial or approval search, get a fixed refusal (`"outcome": "refused"`).
@@ -213,6 +214,12 @@ shown.
   with a note that these are US and EU approvals, and that approval differs by country. Notes
   are written from the first 2,000 characters of each approval's indications, may not rank the
   medicines ("best"), and are checked by the judge like trial notes.
+- **`find_research`:** after the approvals, the same search as `/research` for each approved
+  medicine's active substance, keeping the 2 newest systematic reviews, meta-analyses or
+  randomised trials. The LLM writes one sentence per paper on what it found, which the judge
+  checks against the abstract. A sentence may compare medicines only as its paper does; the
+  summary may not rank them. If Europe PMC can't be reached, the approvals are shown without
+  research.
 - **`find_trials`:** the same SQL as `/trials`, for the condition's official MeSH heading, which
   the LLM names ("hair loss" becomes "Alopecia", "T2DM" becomes "Diabetes Mellitus, Type 2").
   Trials store MeSH headings next to the sponsor's own wording, so this finds trials however

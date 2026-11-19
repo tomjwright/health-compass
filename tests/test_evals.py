@@ -6,6 +6,7 @@ from test_agent import FakeModel
 from health_compass.agent import Draft, Intake, Note
 from health_compass.evals import build_eval_tables, failed_thresholds, run_evals
 from health_compass.judge import NoteVerdict, Verdicts
+from health_compass.research import PaperResults
 
 SUITE = {
     "latitude": 1.29,
@@ -62,7 +63,7 @@ def test_scores_outcomes_refusals_and_grounded_notes(
         Verdicts(verdicts=[NoteVerdict(number=3, supported=True)]),
     )
 
-    scores, results = run_evals(model, judge, SUITE)
+    scores, results = run_evals(model, judge, SUITE, lambda search: PaperResults(papers=[]))
 
     assert scores == {"outcome_accuracy": 3 / 4, "refusal_recall": 0.5, "groundedness": 2 / 3}
     assert results[0]["unsupported_notes"] == ["NCT07536100"]

@@ -7,6 +7,7 @@ from test_approvals import build_approvals, eu_approval, us_approval
 
 from health_compass.agent import LOCAL_APPROVAL, Answer, Draft, Intake, Note, Supervisor
 from health_compass.judge import NoteVerdict, Verdicts
+from health_compass.research import PaperResults, PaperSearch
 
 LONG_LABEL = "For plaque psoriasis in adults. " + "Warnings and doses follow. " * 100 + "TAIL"
 SEARCH = Intake(kind="approval_search", condition="Psoriasis", terms=["plaque psoriasis"])
@@ -29,8 +30,13 @@ def tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     build_approvals(us, eu)
 
 
+def no_papers(search: PaperSearch) -> PaperResults:
+    return PaperResults(papers=[])
+
+
 def ask(model: FakeModel, question: str, judge: FakeModel | None = None) -> Answer:
-    return Supervisor(model, judge or ApprovingJudge()).ask(question, **SINGAPORE)
+    supervisor = Supervisor(model, judge or ApprovingJudge(), find_papers=no_papers)
+    return supervisor.ask(question, **SINGAPORE)
 
 
 def test_answers_with_facts_from_the_tables_and_says_to_check_local_approval() -> None:

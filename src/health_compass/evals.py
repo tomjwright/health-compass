@@ -2,10 +2,12 @@
 
     uv run --env-file .env python -m health_compass.evals
 
-The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, and the approvals
-are 30 real openFDA and EMA records in evals/approvals.json.gz, so every run searches the same
-data. The cases and the thresholds are in evals/cases.yaml. CI runs this as
-the release gate: a score below its threshold fails the build, so the change can't merge.
+The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, the approvals are
+30 real openFDA and EMA records in evals/approvals.json.gz, and the papers are Europe PMC's
+replies for each of those medicines, saved in evals/papers.json.gz, so every run searches the
+same data and never calls Europe PMC. The cases and the thresholds are in evals/cases.yaml. CI
+runs this as the release gate: a score below its threshold fails the build, so the change can't
+merge.
 """
 
 import gzip
@@ -14,6 +16,7 @@ import logging
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,7 @@ from health_compass import transform
 from health_compass.agent import Supervisor, chat_model, judge_model
 from health_compass.ingest import common
 from health_compass.ingest.clinicaltrials import load_studies
+from health_compass.research import PaperResults, PaperSearch
 from health_compass.telemetry import setup_logging
 
 log = logging.getLogger(__name__)
@@ -51,11 +55,20 @@ def build_eval_tables(workdir: Path) -> None:
     transform.build()
 
 
+def saved_papers(search: PaperSearch) -> PaperResults:
+    """The papers saved for the medicine, in place of a live Europe PMC search."""
+    saved = json.loads(gzip.decompress((EVALS_DIR / "papers.json.gz").read_bytes()))
+    return PaperResults(papers=saved.get(search.medicine, []))
+
+
 def run_evals(
-    model: BaseChatModel, judge: BaseChatModel, suite: dict[str, Any]
+    model: BaseChatModel,
+    judge: BaseChatModel,
+    suite: dict[str, Any],
+    find_papers: Callable[[PaperSearch], PaperResults] = saved_papers,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     """The scores, and each case's result, from asking the agent every question in the suite."""
-    supervisor = Supervisor(model, judge)
+    supervisor = Supervisor(model, judge, find_papers)
     results = []
     correct = 0
     should_refuse = 0
