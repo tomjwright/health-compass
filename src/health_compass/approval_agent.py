@@ -72,7 +72,7 @@ ANSWER_PROMPT = """You describe medicines approved in the US or the EU to a memb
 Use only the approvals given. Never give doses or advice on what to take, and never say which
 medicine is best or compare how well they work. Write a one or two sentence summary that
 suggests discussing treatment with their doctor, and one plain-English sentence per approval
-on what it is approved for, using its approval ID exactly as given."""
+on what it is approved for, citing it by its number."""
 
 RANKING = re.compile(r"\b(best|most effective|strongest)\b", re.IGNORECASE)
 
@@ -84,7 +84,8 @@ class Intake(BaseModel):
 
 
 class ApprovalNote(BaseModel):
-    approval_id: str
+    # By number, not approval ID: brands that share an FDA application have different labels.
+    number: int
     note: str = Field(description="One sentence on what the medicine is approved for.")
 
 
@@ -177,11 +178,13 @@ class ApprovalAgent:
 
     @DBOS.step()
     def write_answer(self, state: State) -> State:
-        """The LLM sees each approval's ID, medicine and the start of its indications."""
+        """The LLM sees each approval's number, ID, medicine and the start of its indications."""
         lines = []
-        for approval in state["approvals"]:
-            medicine = f"{approval.medicine_name} ({approval.active_substance})"
-            lines.append(f"{approval.approval_id}: {medicine}\n{indications_shown(approval)}")
+        for number, approval in enumerate(state["approvals"], 1):
+            medicine = (
+                f"{approval.approval_id}: {approval.medicine_name} ({approval.active_substance})"
+            )
+            lines.append(f"{number}. {medicine}\n{indications_shown(approval)}")
         approvals = "\n\n".join(lines)
         messages = [
             ("system", ANSWER_PROMPT),
@@ -199,16 +202,15 @@ class ApprovalAgent:
         no medicine, and say nothing its approval doesn't (checked by the judge LLM)."""
         draft = state["draft"]
         approvals = state["approvals"]
-        found = {approval.approval_id for approval in approvals}
 
         problems = []
         texts = [draft.summary]
         notes = {}
         for approval_note in draft.notes:
-            if approval_note.approval_id not in found:
-                problems.append(f"{approval_note.approval_id} is not one of the approvals given")
+            if not 1 <= approval_note.number <= len(approvals):
+                problems.append(f"{approval_note.number} is not one of the approvals given")
             texts.append(approval_note.note)
-            notes[approval_note.approval_id] = approval_note.note
+            notes[approval_note.number] = approval_note.note
         if any(DOSE.search(text) for text in texts):
             problems.append("it mentions a dose")
         if any(ADVICE.search(text) for text in texts):
@@ -217,8 +219,8 @@ class ApprovalAgent:
             problems.append("it ranks the medicines")
         # The judge is only asked once the cheap checks pass.
         if not problems and notes:
-            for approval_id in unsupported_approval_notes(self.judge, approvals, notes):
-                problems.append(f"the note on {approval_id} says something its record doesn't")
+            for number in unsupported_approval_notes(self.judge, approvals, notes):
+                problems.append(f"the note on {number} says something its record doesn't")
 
         if not problems:
             message = f"{draft.summary}\n\n{LOCAL_APPROVAL}"
@@ -233,11 +235,11 @@ class ApprovalAgent:
         return {"answer": ApprovalAnswer(outcome="approvals_only", message=message, approvals=bare)}
 
 
-def add_notes(approvals: list[Approval], notes: dict[str, str]) -> list[AnsweredApproval]:
-    """Each approval as found in the tables, with the LLM's note on it, if any."""
+def add_notes(approvals: list[Approval], notes: dict[int, str]) -> list[AnsweredApproval]:
+    """Each approval as found in the tables, with the LLM's note on its number, if any."""
     answered = []
-    for approval in approvals:
-        note = notes.get(approval.approval_id)
+    for number, approval in enumerate(approvals, 1):
+        note = notes.get(number)
         answered.append(AnsweredApproval(**approval.model_dump(), note=note))
     return answered
 

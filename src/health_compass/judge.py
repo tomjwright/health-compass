@@ -45,16 +45,16 @@ def unsupported_notes(
 
 
 def unsupported_approval_notes(
-    judge: BaseChatModel, approvals: Sequence[Approval], notes: dict[str, str]
-) -> list[str]:
-    """The approval IDs of the notes that the judge finds their approval doesn't support."""
+    judge: BaseChatModel, approvals: Sequence[Approval], notes: dict[int, str]
+) -> list[int]:
+    """The numbers (from 1, in order) of the notes that the judge finds their approval doesn't
+    support. By number, because brands that share an FDA application have different labels."""
     records = {}
-    for approval in approvals:
+    for number, approval in enumerate(approvals, 1):
         medicine = f"{approval.medicine_name} ({approval.active_substance})"
-        records[approval.approval_id] = (
-            f"Medicine: {medicine}\nApproved for: {indications_shown(approval)}"
-        )
-    return unsupported(judge, APPROVAL_PROMPT, records, notes)
+        records[str(number)] = f"Medicine: {medicine}\nApproved for: {indications_shown(approval)}"
+    by_number = {str(number): note for number, note in notes.items()}
+    return [int(number) for number in unsupported(judge, APPROVAL_PROMPT, records, by_number)]
 
 
 def unsupported(

@@ -19,14 +19,12 @@ SEARCH = Intake(kind="approval_search", condition="Psoriasis", terms=["plaque ps
 GOOD = Draft(
     summary="Two medicines are approved for psoriasis. Talk to your doctor about your options.",
     notes=[
-        ApprovalNote(approval_id="NDA000001", note="It is approved for plaque psoriasis."),
-        ApprovalNote(approval_id="EMEA/H/C/1", note="It is approved for psoriasis."),
+        ApprovalNote(number=1, note="It is approved for plaque psoriasis."),
+        ApprovalNote(number=2, note="It is approved for psoriasis."),
     ],
 )
 RANKED = Draft(summary="Eudrug is the best psoriasis medicine.", notes=[])
-INVENTED = Draft(
-    summary="One medicine.", notes=[ApprovalNote(approval_id="NDA099999", note="Made up.")]
-)
+INVENTED = Draft(summary="One medicine.", notes=[ApprovalNote(number=3, note="Made up.")])
 
 
 @pytest.fixture(autouse=True)
@@ -83,20 +81,20 @@ def test_retries_when_the_judge_finds_a_note_its_approval_does_not_support() -> 
     model = FakeModel(SEARCH, GOOD, GOOD)
     rejects_one = Verdicts(
         verdicts=[
-            NoteVerdict(id="NDA000001", supported=False),
-            NoteVerdict(id="EMEA/H/C/1", supported=True),
+            NoteVerdict(id="1", supported=False),
+            NoteVerdict(id="2", supported=True),
         ]
     )
     approves_both = Verdicts(
         verdicts=[
-            NoteVerdict(id="NDA000001", supported=True),
-            NoteVerdict(id="EMEA/H/C/1", supported=True),
+            NoteVerdict(id="1", supported=True),
+            NoteVerdict(id="2", supported=True),
         ]
     )
     judge = FakeModel(rejects_one, approves_both)
     answer = ask(model, "What's approved for psoriasis?", judge)
     assert answer.outcome == "answered"
-    assert "the note on NDA000001 says something its record doesn't" in model.prompts[-1]
+    assert "the note on 1 says something its record doesn't" in model.prompts[-1]
 
 
 def test_shows_only_the_approvals_when_both_drafts_fail_the_checks() -> None:
