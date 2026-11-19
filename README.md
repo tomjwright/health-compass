@@ -123,6 +123,9 @@ The map shows the site listed for each trial. City lookup uses Open-Meteo (GeoNa
 map uses OpenStreetMap tiles. For a FastAPI server on a different address, set
 `HEALTH_COMPASS_API_URL` in `web/.env.local` before starting Next.js.
 
+Select **Ask** to enter a trial question, follow the agent's progress, and open its ClinicalTrials.gov
+sources. The API needs an LLM key for this page. See [Ask the agent](#ask-the-agent) for setup.
+
 Once the trial tables are built (see below), `POST /trials` finds trials for a condition, each at
 its nearest recruiting site (or its nearest site, if none is recruiting; `site_status` says
 which). Recruiting trials come first, nearest first, then trials that have stopped recruiting
