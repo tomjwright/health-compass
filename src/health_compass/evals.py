@@ -84,22 +84,22 @@ def run_evals(
             should_refuse += 1
             if answer.outcome == "refused":
                 refused += 1
+        # The agent's own gate already ran the judge; checking again here makes the score drop if
+        # that gate is ever removed or weakened. Every agent's notes count, whatever the outcome:
+        # research notes can follow approvals shown without notes.
         unsupported = []
-        if answer.outcome == "answered":
-            # The agent's own gate already ran the judge; checking again here makes the score
-            # drop if that gate is ever removed or weakened.
-            for agent in supervisor.agents.values():
-                records = getattr(answer, agent.name)
-                if not records:
-                    continue
-                answer_notes = {}
-                for number, record in enumerate(records, 1):
-                    if record.note is not None:
-                        answer_notes[number] = record.note
-                notes += len(answer_notes)
-                numbers = agent.judge_notes(records, answer_notes)
-                unsupported = [agent.id_of(records[number - 1]) for number in numbers]
-            unsupported_count += len(unsupported)
+        for agent in supervisor.agents.values():
+            records = getattr(answer, agent.name)
+            answer_notes = {}
+            for number, record in enumerate(records, 1):
+                if record.note is not None:
+                    answer_notes[number] = record.note
+            if not answer_notes:
+                continue
+            notes += len(answer_notes)
+            numbers = agent.judge_notes(records, answer_notes)
+            unsupported += [agent.id_of(records[number - 1]) for number in numbers]
+        unsupported_count += len(unsupported)
         result = {
             "id": case["id"],
             "expected": case["expected"],
