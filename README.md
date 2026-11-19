@@ -184,8 +184,9 @@ Each paper has its PubMed ID, title, journal, date, type, abstract and a link to
 
 ### Ask the agent
 
-`POST /ask` answers a question about trials near you through a LangGraph agent
-(`src/health_compass/agent.py`). Put a free Gemini key from https://aistudio.google.com/apikey in
+`POST /ask` answers questions about nearby trials, approved medicines, and research on those
+medicines. Provide both coordinates for nearby trials. For medicine questions, send just the
+question. Put a free Gemini key from https://aistudio.google.com/apikey in
 `.env` as `GOOGLE_API_KEY`. The API needs Postgres (`docker compose up -d`) for durable runs.
 
 ```bash

@@ -14,7 +14,7 @@ from typing import Literal
 from dbos import DBOS
 from fastapi import FastAPI, HTTPException, Response
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from health_compass import approvals, registry_trials, research, trials
 from health_compass.agent import Answer, answer_question
@@ -100,8 +100,14 @@ class Question(BaseModel):
     """A question in the user's words. The location comes from the app, never from the LLM."""
 
     question: str = Field(min_length=3, max_length=500, examples=["Any alopecia trials near me?"])
-    latitude: float = Field(ge=-90, le=90, examples=[1.29])
-    longitude: float = Field(ge=-180, le=180, examples=[103.85])
+    latitude: float | None = Field(default=None, ge=-90, le=90, examples=[1.29])
+    longitude: float | None = Field(default=None, ge=-180, le=180, examples=[103.85])
+
+    @model_validator(mode="after")
+    def validate_location(self) -> "Question":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("Provide both latitude and longitude, or neither.")
+        return self
 
 
 class Run(BaseModel):
