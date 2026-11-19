@@ -159,9 +159,10 @@ Each run is a durable DBOS workflow, and each step below is a DBOS step saved in
 API stops mid-run, it resumes the run from its last finished step when it starts again. The run,
 including the question, location and answer, is deleted after `RUN_TTL_MINUTES` (60 by default).
 
-The agent is one LangGraph graph (`agent.py`). `route` sends each question to the search for its
-kind of record; `write_answer` and `check_output` are shared, and take what differs between kinds
-of record (prompts, how a record is shown) from that kind's `Source`.
+The agent is one LangGraph graph (`agent.py`). The `Supervisor`'s `route` step hands each question
+to the agent for its kind, such as `TrialAgent`, whose own graph is a node of the supervisor's.
+Agents that find records and write a note on each (`RecordAgent`) share the `write_answer` and
+`check_output` steps, and set only their search, prompts and how a record is shown.
 
 - **`route` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
   and anything that isn't a trial search, get a fixed refusal (`"outcome": "refused"`).

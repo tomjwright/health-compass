@@ -13,7 +13,7 @@ from test_api import SINGAPORE, site, trial
 from test_transform import save_load
 
 from health_compass import agent, transform
-from health_compass.agent import Agent, Draft, Intake, Note
+from health_compass.agent import Draft, Intake, Note, Supervisor
 from health_compass.api import app, delete_old_runs
 from health_compass.judge import NoteVerdict, Verdicts
 
@@ -72,7 +72,7 @@ def ask(
 ) -> agent.Answer:
     if judge is None:
         judge = ApprovingJudge()
-    return Agent(model, judge).ask(question, **SINGAPORE)
+    return Supervisor(model, judge).ask(question, **SINGAPORE)
 
 
 def test_answers_with_facts_from_the_tables_and_notes_from_the_llm() -> None:

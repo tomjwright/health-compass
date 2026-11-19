@@ -20,7 +20,7 @@ import yaml
 from langchain_core.language_models import BaseChatModel
 
 from health_compass import transform
-from health_compass.agent import TRIALS, Agent, chat_model, judge_model, judge_notes
+from health_compass.agent import Supervisor, chat_model, judge_model
 from health_compass.ingest.clinicaltrials import load_studies
 from health_compass.telemetry import setup_logging
 
@@ -44,7 +44,7 @@ def run_evals(
     model: BaseChatModel, judge: BaseChatModel, suite: dict[str, Any]
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     """The scores, and each case's result, from asking the agent every question in the suite."""
-    agent = Agent(model, judge)
+    supervisor = Supervisor(model, judge)
     results = []
     correct = 0
     should_refuse = 0
@@ -52,7 +52,7 @@ def run_evals(
     notes = 0
     unsupported_count = 0
     for case in suite["cases"]:
-        answer = agent.ask(case["question"], suite["latitude"], suite["longitude"])
+        answer = supervisor.ask(case["question"], suite["latitude"], suite["longitude"])
         passed = answer.outcome == case["expected"]
         if passed:
             correct += 1
@@ -69,8 +69,9 @@ def run_evals(
                 if trial.note is not None:
                     answer_notes[number] = trial.note
             notes += len(answer_notes)
-            numbers = judge_notes(judge, TRIALS, answer.trials, answer_notes)
-            unsupported = [answer.trials[number - 1].nct_id for number in numbers]
+            trials = supervisor.agents["trials"]
+            numbers = trials.judge_notes(answer.trials, answer_notes)
+            unsupported = [trials.id_of(answer.trials[number - 1]) for number in numbers]
             unsupported_count += len(unsupported)
         result = {
             "id": case["id"],
