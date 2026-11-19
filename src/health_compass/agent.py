@@ -178,7 +178,27 @@ def read_intake(model: BaseChatModel, question: str) -> Intake:
 
 
 def expand_approval_search(search: ApprovalSearch) -> ApprovalSearch:
-    """Use the same condition intake as Ask, with the original query as a fallback."""
+    """Use known label wording first, then Ask's condition intake for other searches."""
+    name = " ".join(search.condition.casefold().replace("-", " ").split())
+    # OTC minoxidil labels say what the medicine does ("regrow hair").
+    # Keep the specific pattern-hair-loss search separate from alopecia areata.
+    if name in (
+        "androgenic alopecia",
+        "androgenetic alopecia",
+        "alopecia, androgenetic",
+        "male hair loss",
+        "male pattern hair loss",
+        "male pattern baldness",
+    ):
+        return _with_approval_terms(
+            search,
+            "Androgenetic Alopecia",
+            ["regrow hair", *search.terms, "male pattern hair loss", "male pattern baldness"],
+        )
+    if name in ("alopecia", "hair loss"):
+        return _with_approval_terms(
+            search, "Alopecia", ["regrow hair", *search.terms, "hair loss", "androgenetic alopecia"]
+        )
     try:
         intake = read_intake(
             chat_model(timeout=8),
@@ -191,9 +211,15 @@ def expand_approval_search(search: ApprovalSearch) -> ApprovalSearch:
     condition = (intake.condition or "").strip()[:100].rstrip()
     if intake.kind != "approval_search" or len(condition) < 2:
         return search
+    return _with_approval_terms(search, condition, [search.condition, *search.terms, *intake.terms])
+
+
+def _with_approval_terms(
+    search: ApprovalSearch, condition: str, candidates: list[str]
+) -> ApprovalSearch:
     terms: list[str] = []
     seen = {condition.casefold()}
-    for candidate in [search.condition, *search.terms, *intake.terms]:
+    for candidate in candidates:
         term = candidate.strip()[:100].rstrip()
         if len(term) >= 2 and term.casefold() not in seen:
             seen.add(term.casefold())

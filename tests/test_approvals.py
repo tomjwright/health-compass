@@ -152,6 +152,41 @@ def test_approvals_still_use_the_entered_condition_when_the_agent_is_unavailable
     assert response.json()["search"]["terms"] == []
 
 
+def test_hair_loss_searches_match_fda_label_wording_without_a_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_approvals(
+        [
+            us_approval(
+                "NDA020788",
+                "PROPECIA",
+                "19971219",
+                "For male pattern hair loss (androgenetic alopecia).",
+            ),
+            us_approval(
+                "NDA020834", "ROGAINE", "19971114", "Use to regrow hair on the top of the scalp."
+            ),
+            us_approval("NDA018154", "LONITEN", "19790812", "For hypertension."),
+        ],
+        [eu_approval("EMEA/H/C/1", "AreataDrug", "Authorised", "09/01/2020", "Alopecia Areata")],
+    )
+
+    def unavailable(**options: Any) -> None:
+        raise TimeoutError
+
+    monkeypatch.setattr(agent, "chat_model", unavailable)
+    client = TestClient(app)
+    for condition in ("androgenic alopecia", " Male  Hair Loss ", "hair loss"):
+        response = client.post("/approvals", json={"condition": condition, "expand_terms": True})
+        assert response.status_code == 200
+        body = response.json()
+        expected = ["NDA020788", "NDA020834"]
+        if condition == "hair loss":
+            expected.insert(0, "EMEA/H/C/1")
+        assert [approval["approval_id"] for approval in body["approvals"]] == expected
+        assert "regrow hair" in body["search"]["terms"]
+
+
 def test_rejects_more_than_three_terms() -> None:
     search = {"condition": "Psoriasis", "terms": ["a1", "b2", "c3", "d4"]}
     response = TestClient(app).post("/approvals", json=search)
