@@ -128,7 +128,7 @@ def ask_result(run_id: str) -> Run:
 
 
 def steps_done(run_id: str) -> list[str]:
-    """The agent's steps that have run so far, in order, e.g. ["check_input", "find_trials"]."""
+    """The agent's steps that have run so far, in order, e.g. ["route", "find_trials"]."""
     done = []
     for step in DBOS.list_workflow_steps(run_id, load_output=False):
         name = step["function_name"].split(".")[-1]

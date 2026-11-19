@@ -181,14 +181,19 @@ Each run is a durable DBOS workflow, and each step below is a DBOS step saved in
 API stops mid-run, it resumes the run from its last finished step when it starts again. The run,
 including the question, location and answer, is deleted after `RUN_TTL_MINUTES` (60 by default).
 
-- **`check_input` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
+The agent is one LangGraph graph (`agent.py`). The `Supervisor`'s `route` step hands each question
+to the agent for its kind, such as `TrialAgent`, whose own graph is a node of the supervisor's.
+Agents that find records and write a note on each (`RecordAgent`) share the `write_answer` and
+`check_output` steps, and set only their search, prompts and how a record is shown.
+
+- **`route` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
   and anything that isn't a trial search, get a fixed refusal (`"outcome": "refused"`).
 - **`find_trials`:** the same SQL as `/trials`, for the condition's official MeSH heading, which
   the LLM names ("hair loss" becomes "Alopecia", "T2DM" becomes "Diabetes Mellitus, Type 2").
   Trials store MeSH headings next to the sponsor's own wording, so this finds trials however
   the user put it.
-- **`write_answer`:** the LLM writes a summary and one note per trial. It sees each trial's ID,
-  title and status, never the location.
+- **`write_answer`:** the LLM writes a summary and one note per trial, citing each by its number
+  in the list. It sees each trial's ID, title and status, never the location.
 - **`check_output` (gateway):** every note must cite a trial that was found, with no doses or
   advice. Then a judge LLM (`judge.py`) reads each note next to the trial's title and summary,
   and rejects any note that claims something the record doesn't say. A failed draft is
