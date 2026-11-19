@@ -12,3 +12,7 @@
 .results li:first-child { border-top: none; }
 .results li button { margin-top: 6px; min-height: 36px; }
 .results details p { white-space: pre-line; overflow-wrap: anywhere; }
+.research { background: #f2f7f7; margin-top: 12px; padding: 14px; border-radius: 12px; }
+.research h4, .research h5 { margin: 4px 0; }
+.research h5 { font-size: .95rem; }
+.research p[role="alert"] { color: #a12726; }

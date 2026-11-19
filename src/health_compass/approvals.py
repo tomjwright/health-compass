@@ -4,12 +4,13 @@ The search itself is plain SQL in find_approvals.sql.
 """
 
 import logging
+import re
 from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
 
 import duckdb
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from health_compass.transform import warehouse_path
 
@@ -18,6 +19,12 @@ log = logging.getLogger(__name__)
 FIND_APPROVALS = (Path(__file__).parent / "find_approvals.sql").read_text()
 # Labels can run to 23,000 characters; what a medicine is approved for comes first.
 INDICATIONS_SHOWN = 2000
+# Papers generally use the base medicine name, without a salt or FDA biologic suffix.
+SALT = re.compile(
+    r"\s+(hydrochloride|hcl|sodium|potassium|calcium|phosphate|sulfate|maleate|mesylate|"
+    r"citrate|tartrate|acetate|fumarate|succinate|besylate|hydrobromide|tosilate|tosylate|"
+    r"benzoate|bromide|chloride|dipropionate|propionate|furoate|xinafoate)$"
+)
 
 Term = Annotated[str, Field(min_length=2, max_length=100)]
 
@@ -57,9 +64,20 @@ class Approval(BaseModel):
     indications: str | None
     source_url: str | None
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def research_medicine(self) -> str | None:
+        """The first active substance in a combination, as it is named in papers."""
+        if not self.active_substance:
+            return None
+        first = re.split(r"[;,/]| and ", self.active_substance.lower())[0].strip()
+        name = SALT.sub("", re.sub(r"-[a-z]{4}$", "", first))[:100].rstrip()
+        return name if len(name) >= 2 else None
+
 
 class ApprovalResults(BaseModel):
     approvals: list[Approval]
+    search: ApprovalSearch | None = None
 
 
 def find_approvals(search: ApprovalSearch) -> ApprovalResults:

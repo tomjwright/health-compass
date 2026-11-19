@@ -58,14 +58,6 @@ MAX_APPROVALS = 5
 PAPERS_PER_MEDICINE = 2
 # Abstracts are about 2,300 characters; a long one is cut here.
 ABSTRACT_SHOWN = 3000
-# Salts in US active-substance names, which papers leave out ("metformin", not "metformin
-# hydrochloride").
-SALT = re.compile(
-    r"\s+(hydrochloride|hcl|sodium|potassium|calcium|phosphate|sulfate|maleate|mesylate|"
-    r"citrate|tartrate|acetate|fumarate|succinate|besylate|hydrobromide|tosilate|tosylate|"
-    r"benzoate|bromide|chloride|dipropionate|propionate|furoate|xinafoate)$",
-    re.IGNORECASE,
-)
 MAX_ANSWER_ATTEMPTS = 2
 
 REFUSALS = {
@@ -149,12 +141,15 @@ RANKING = re.compile(
 )
 
 
-def chat_model() -> BaseChatModel:
+def chat_model(*, timeout: float | None = None) -> BaseChatModel:
     """The LLM in LLM_MODEL, as "provider:model", e.g. "anthropic:claude-haiku-4-5".
 
     Another provider needs its LangChain package (e.g. langchain-anthropic) and API key.
     """
-    return init_chat_model(os.environ.get("LLM_MODEL", DEFAULT_MODEL), temperature=0)
+    name = os.environ.get("LLM_MODEL", DEFAULT_MODEL)
+    if timeout is not None:
+        return init_chat_model(name, temperature=0, timeout=timeout, max_retries=0)
+    return init_chat_model(name, temperature=0)
 
 
 def judge_model() -> BaseChatModel:
@@ -173,6 +168,37 @@ class Intake(BaseModel):
     kind: Literal["trial_search", "approval_search", "personal_medical_advice", "other"]
     condition: str | None = Field(description="The condition's MeSH heading, or null.")
     terms: list[str] = Field(default=[], description="Up to 3 other words for the condition.")
+
+
+def read_intake(model: BaseChatModel, question: str) -> Intake:
+    reply = model.with_structured_output(Intake).invoke(
+        [("system", INTAKE_PROMPT), ("human", question)]
+    )
+    return Intake.model_validate(reply)
+
+
+def expand_approval_search(search: ApprovalSearch) -> ApprovalSearch:
+    """Use the same condition intake as Ask, with the original query as a fallback."""
+    try:
+        intake = read_intake(
+            chat_model(timeout=8),
+            f"Which medicines are approved for this condition?\n{search.condition}",
+        )
+    except Exception as error:
+        # Model errors can repeat the input condition.
+        log.warning("Approval condition expansion unavailable (%s)", type(error).__name__)
+        return search
+    condition = (intake.condition or "").strip()[:100].rstrip()
+    if intake.kind != "approval_search" or len(condition) < 2:
+        return search
+    terms: list[str] = []
+    seen = {condition.casefold()}
+    for candidate in [search.condition, *search.terms, *intake.terms]:
+        term = candidate.strip()[:100].rstrip()
+        if len(term) >= 2 and term.casefold() not in seen:
+            seen.add(term.casefold())
+            terms.append(term)
+    return ApprovalSearch(condition=condition, terms=terms[:3], limit=search.limit)
 
 
 class Note(BaseModel):
@@ -614,10 +640,7 @@ class Supervisor:
         with tracer.start_as_current_span(
             "agent.route", record_exception=False, set_status_on_exception=False
         ) as span:
-            reply = self.model.with_structured_output(Intake).invoke(
-                [("system", INTAKE_PROMPT), ("human", state["question"])]
-            )
-            intake = Intake.model_validate(reply)
+            intake = read_intake(self.model, state["question"])
             span.set_attribute("agent.kind", intake.kind)
         for agent in self.agents.values():
             if intake.kind == agent.kind and intake.condition:
@@ -648,11 +671,7 @@ def medicines(approvals: list[AnsweredApproval]) -> list[str]:
     first of a combination."""
     names: list[str] = []
     for approval in approvals:
-        if not approval.active_substance:
-            continue
-        first = re.split(r"[;,/]| and ", approval.active_substance)[0].strip().lower()
-        # FDA adds a four-letter suffix to biologics' names, e.g. "omalizumab-igec".
-        name = SALT.sub("", re.sub(r"-[a-z]{4}$", "", first))[:100]
-        if len(name) >= 2 and name not in names:
+        name = approval.research_medicine
+        if name and name not in names:
             names.append(name)
     return names
