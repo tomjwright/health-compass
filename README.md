@@ -142,6 +142,21 @@ holder, approval date, indications and a link to its FDA or EMA page. The query 
 `src/health_compass/find_approvals.sql`. US labels have no MeSH headings, so a word like
 "psoriasis" also finds older medicines whose label lists it among many conditions.
 
+### Find research on a medicine
+
+`POST /research` searches Europe PMC, which includes all of PubMed, for the newest systematic
+reviews, meta-analyses and randomised controlled trials of a medicine for a condition. The
+medicine must be in the paper's title, and the condition or one of up to three other `terms`
+for it in the title or abstract. Papers are searched live, since there are too many to load,
+and only the two names are sent. If Europe PMC can't be reached, it returns a 503.
+
+```bash
+curl -s localhost:8000/research -H 'content-type: application/json' \
+  -d '{"medicine": "deucravacitinib", "condition": "Psoriasis"}'
+```
+
+Each paper has its PubMed ID, title, journal, date, type, abstract and a link to Europe PMC.
+
 ### Ask the agent
 
 `POST /ask` answers a question about trials near you through a LangGraph agent
@@ -327,7 +342,7 @@ file and replays every raw load. Use it after changing staging, or if the DuckDB
 4. Trial finder API (distance search in SQL)
 5. Find trials page (Next.js, Leaflet map)
 6. openFDA and EMA approvals ingestion and models
-7. Europe PMC fetch per condition, embeddings and vector search
+7. Europe PMC search per medicine and condition (live, no embeddings)
 8. LangGraph supervisor, trials agent and the checks
 9. Evidence agent, approvals agent, writer and verifier
 10. Eval harness, CI release gate and runtime gate
