@@ -134,11 +134,10 @@ ClinicalTrials.gov and applies the exact straight-line cutoff locally. City look
 Open-Meteo (GeoNames), and the map uses OpenStreetMap tiles. For a FastAPI server on a different
 address, set `HEALTH_COMPASS_API_URL` in `web/.env.local` before starting Next.js.
 
-Once the trial tables are built (see below), `POST /trials` finds trials for a condition, each at
-its nearest recruiting site (or its nearest site, if none is recruiting; `site_status` says
-which). Recruiting trials come first, nearest first, then trials that have stopped recruiting
-(`is_recruiting: false`, with their `overall_status`). The search is a POST
-body, so the condition and location stay out of URLs, logs and traces.
+Once the trial tables are built (see below), `POST /trials` finds recruiting trials for a
+condition, each at its nearest recruiting site in the latest warehouse build. Results are
+ordered by distance. The search is a POST body, so the condition and location stay out of
+URLs, logs and traces.
 
 ```bash
 curl -s localhost:8000/trials -H 'content-type: application/json' \
@@ -221,8 +220,8 @@ is shown.
   checks against the abstract. A sentence may compare medicines only as its paper does; the
   summary may not rank them. If Europe PMC can't be reached, the approvals are shown without
   research.
-- **`find_trials`:** the same SQL as `/trials`, for the condition's official MeSH heading, which
-  the LLM names ("hair loss" becomes "Alopecia", "T2DM" becomes "Diabetes Mellitus, Type 2").
+- **`find_trials`:** the same recruiting-only search as `/trials`, using the official MeSH
+  heading the LLM names ("hair loss" becomes "Alopecia", "T2DM" becomes "Diabetes Mellitus, Type 2").
   Trials store MeSH headings next to the sponsor's own wording, so this finds trials however
   the user put it.
 - **`write_answer`:** the LLM writes a summary and one note per trial, citing each by its number
@@ -360,9 +359,9 @@ one. See "Explore the data" above for queries.
 **Trial history.** A new version of a trial starts each time ClinicalTrials.gov posts an update
 (`last_updated` changes). The previous version gets `valid_to` set to that day. Use
 `is_current` for each trial as it is now. The facts, bridges and sites point at current versions.
-The tables hold every trial that was recruiting in some load. A trial that stops recruiting stays,
-with `is_recruiting = false` and its new `overall_status`, so the app can show it as "Not
-recruiting: Completed". Trials we never saw recruiting are left out.
+The tables hold every trial that was recruiting in some load. A trial that stops recruiting stays
+in the warehouse history with `is_recruiting = false` and its new `overall_status`. Trials we
+never saw recruiting are left out.
 
 **Rebuild from scratch.** `python -m health_compass.transform --full-refresh` starts from an empty
 file and replays every raw load. Use it after changing staging, or if the DuckDB file is lost.

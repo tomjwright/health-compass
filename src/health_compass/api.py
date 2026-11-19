@@ -54,7 +54,7 @@ def health() -> dict[str, str]:
 
 @app.post("/trials")
 def find_trials(search: trials.TrialSearch) -> trials.TrialResults:
-    """Trials for a condition, nearest first, recruiting ones before those that have stopped."""
+    """Recruiting trials from the latest warehouse build, nearest recruiting site first."""
     try:
         return trials.find_trials(search)
     except trials.TablesNotBuiltError:
