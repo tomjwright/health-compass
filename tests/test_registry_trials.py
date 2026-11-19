@@ -57,6 +57,7 @@ def test_searches_recruiting_studies_worldwide_without_a_location(
                 "title": "A trial without a site",
                 "overall_status": "RECRUITING",
                 "nearest_site": None,
+                "recruiting_sites": [],
             }
         ],
     }
@@ -70,8 +71,10 @@ def test_searches_recruiting_studies_worldwide_without_a_location(
     assert last.json()["trials"][0]["nct_id"] == "NCT00000002"
 
 
+@pytest.mark.parametrize("radius", [100, 1000])
 def test_nearby_returns_every_recruiting_match_in_distance_order(
     monkeypatch: pytest.MonkeyPatch,
+    radius: int,
 ) -> None:
     def study(nct_id: str, *sites: tuple[str, str, float]) -> dict[str, object]:
         locations = [
@@ -88,7 +91,7 @@ def test_nearby_returns_every_recruiting_match_in_distance_order(
 
     def registry(url: str, timeout: float) -> BytesIO:
         params = parse_qs(urlsplit(url).query)
-        assert params["filter.geo"] == ["distance(0.0,0.0,112km)"]
+        assert params["filter.geo"] == [f"distance(0.0,0.0,{radius + 12}km)"]
         assert params["filter.advanced"] == [
             'SEARCH[Location](AREA[LocationCountry]COVERAGE[FullMatch]"France"'
             " AND AREA[LocationStatus]RECRUITING)"
@@ -107,6 +110,7 @@ def test_nearby_returns_every_recruiting_match_in_distance_order(
                     ),
                     study("NCT00000003", ("France", "RECRUITING", 1)),
                     study("NCT00000004", ("Germany", "RECRUITING", 0.05)),
+                    study("NCT00000005", ("France", "RECRUITING", 12)),
                 ],
                 "nextPageToken": "second-page",
             }
@@ -119,38 +123,68 @@ def test_nearby_returns_every_recruiting_match_in_distance_order(
             "condition": "hair loss",
             "country": "France",
             "origin": {"latitude": 0.04, "longitude": 0.04},
+            "radius_km": radius,
         },
     )
     assert response.status_code == 200
     body = response.json()
-    assert (body["total_count"], body["radius_km"], body["next_page_token"]) == (2, 100, None)
-    assert [trial["nct_id"] for trial in body["trials"]] == ["NCT00000002", "NCT00000001"]
+    expected = ["NCT00000002", "NCT00000001"]
+    if radius == 1000:
+        expected.append("NCT00000003")
+    assert (body["total_count"], body["radius_km"], body["next_page_token"]) == (
+        len(expected),
+        radius,
+        None,
+    )
+    assert [trial["nct_id"] for trial in body["trials"]] == expected
     nearest = [trial["nearest_site"] for trial in body["trials"]]
-    assert [site["longitude"] for site in nearest] == [0.2, 0.5]
-    assert [site["distance_km"] for site in nearest] == pytest.approx([17.8, 51.15], abs=0.05)
+    assert [site["longitude"] for site in nearest[:2]] == [0.2, 0.5]
+    assert [site["distance_km"] for site in nearest[:2]] == pytest.approx([17.8, 51.15], abs=0.05)
 
 
-def test_country_search_can_return_no_studies(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("country", [None, "Turkey (Türkiye)"])
+def test_paged_search_returns_recruiting_locations(
+    monkeypatch: pytest.MonkeyPatch, country: str | None
+) -> None:
     def registry(url: str, timeout: float) -> BytesIO:
         params = parse_qs(urlsplit(url).query)
         assert "filter.geo" not in params
-        assert params["filter.advanced"] == [
-            'SEARCH[Location](AREA[LocationCountry]COVERAGE[FullMatch]"Turkey (Türkiye)"'
-            " AND AREA[LocationStatus]RECRUITING)"
-        ]
-        return BytesIO(b'{"studies": [], "totalCount": 0}')
+        if country:
+            assert params["filter.advanced"] == [
+                'SEARCH[Location](AREA[LocationCountry]COVERAGE[FullMatch]"Turkey (Türkiye)"'
+                " AND AREA[LocationStatus]RECRUITING)"
+            ]
+        assert "LocationGeoPoint" in params["fields"][0].split(",")
+        study = {
+            "protocolSection": {
+                "identificationModule": {"nctId": "NCT00000001", "briefTitle": "A study"},
+                "statusModule": {"overallStatus": "RECRUITING"},
+                "contactsLocationsModule": {
+                    "locations": [
+                        {
+                            "city": "Ankara",
+                            "country": "Turkey (Türkiye)",
+                            "status": "RECRUITING",
+                            "geoPoint": {"lat": 39.93, "lon": 32.86},
+                        },
+                        {"city": "Berlin", "country": "Germany", "status": "RECRUITING"},
+                        {"city": "Izmir", "country": "Turkey (Türkiye)", "status": "COMPLETED"},
+                    ],
+                },
+            }
+        }
+        return BytesIO(json.dumps({"studies": [study], "totalCount": 1}).encode())
 
     monkeypatch.setattr("urllib.request.urlopen", registry)
     response = TestClient(app).post(
-        "/trials/search", json={"condition": "hair loss", "country": "Turkey (Türkiye)"}
+        "/trials/search", json={"condition": "hair loss", "country": country}
     )
     assert response.status_code == 200
-    assert response.json() == {
-        "trials": [],
-        "total_count": 0,
-        "next_page_token": None,
-        "radius_km": None,
-    }
+    study = response.json()["trials"][0]
+    locations = study["recruiting_sites"]
+    assert [site["city"] for site in locations] == (["Ankara"] if country else ["Ankara", "Berlin"])
+    assert locations[0]["point"] == {"lat": 39.93, "lon": 32.86}
+    assert study["nearest_site"] is None
 
 
 def test_registry_outage_returns_a_retryable_error(monkeypatch: pytest.MonkeyPatch) -> None:

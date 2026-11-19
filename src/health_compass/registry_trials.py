@@ -9,7 +9,7 @@ from pydantic import AliasPath, BaseModel, Field, model_validator
 
 from health_compass.ingest.clinicaltrials import API
 
-NEARBY_KM = 100
+DEFAULT_RADIUS_KM = 100
 
 
 class Coordinates(BaseModel):
@@ -21,6 +21,7 @@ class RegistrySearch(BaseModel):
     condition: str = Field(min_length=2, max_length=100)
     country: str | None = Field(default=None, max_length=80, pattern=r"^[\w .,'\u{2019}()&-]+$")
     origin: Coordinates | None = None
+    radius_km: int = Field(default=DEFAULT_RADIUS_KM, ge=1, le=1000)
     page_token: str | None = Field(default=None, min_length=1, max_length=512)
 
     @model_validator(mode="after")
@@ -66,6 +67,7 @@ class RecruitingStudy(BaseModel):
         exclude=True,
     )
     nearest_site: NearbySite | None = None
+    recruiting_sites: list[Site] = Field(default_factory=list)
 
 
 class RegistryPage(BaseModel):
@@ -89,13 +91,21 @@ def fetch_page(params: dict[str, str]) -> RegistryPage:
         return RegistryPage.model_validate_json(response.read())
 
 
+def recruiting_sites(study: RecruitingStudy, country: str | None) -> list[Site]:
+    return [
+        site
+        for site in study.locations
+        if site.status == "RECRUITING" and (country is None or site.country == country)
+    ]
+
+
 def nearest_site(
-    study: RecruitingStudy, origin: Coordinates, country: str | None
+    study: RecruitingStudy, origin: Coordinates, country: str | None, radius_km: int
 ) -> NearbySite | None:
     best: NearbySite | None = None
     lat = radians(origin.latitude)
-    for site in study.locations:
-        if site.status != "RECRUITING" or not site.point or (country and site.country != country):
+    for site in recruiting_sites(study, country):
+        if not site.point:
             continue
         site_lat = radians(site.point.lat)
         delta_lon = radians(site.point.lon - origin.longitude)
@@ -103,7 +113,7 @@ def nearest_site(
             sin((site_lat - lat) / 2) ** 2 + cos(lat) * cos(site_lat) * sin(delta_lon / 2) ** 2
         )
         distance = 2 * 6371 * asin(sqrt(min(1, haversine)))
-        if distance <= NEARBY_KM and (best is None or distance < best.distance_km):
+        if distance <= radius_km and (best is None or distance < best.distance_km):
             best = NearbySite(
                 facility=site.facility,
                 city=site.city,
@@ -120,7 +130,10 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
         "query.cond": search.condition,
         "filter.overallStatus": "RECRUITING",
         "countTotal": "true",
-        "fields": "NCTId,BriefTitle,OverallStatus",
+        "fields": (
+            "NCTId,BriefTitle,OverallStatus,"
+            "LocationFacility,LocationCity,LocationCountry,LocationStatus,LocationGeoPoint"
+        ),
         "pageSize": "20",
     }
     if search.country:
@@ -133,6 +146,8 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
         if search.page_token:
             params["pageToken"] = search.page_token
         page = fetch_page(params)
+        for study in page.trials:
+            study.recruiting_sites = recruiting_sites(study, search.country)
         return RegistryResults(
             trials=page.trials, total_count=page.total_count, next_page_token=page.next_page_token
         )
@@ -140,10 +155,7 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
     # Round away precise device coordinates before forwarding. The farthest rounding
     # shift is under 12 km. Compute the true distance locally for the final cutoff.
     lat, lon = round(origin.latitude, 1), round(origin.longitude, 1)
-    params["filter.geo"] = f"distance({lat},{lon},{NEARBY_KM + 12}km)"
-    params["fields"] += (
-        ",LocationFacility,LocationCity,LocationCountry,LocationStatus,LocationGeoPoint"
-    )
+    params["filter.geo"] = f"distance({lat},{lon},{search.radius_km + 12}km)"
     params["pageSize"] = "1000"
     params.pop("countTotal")
     matches: list[tuple[float, RecruitingStudy]] = []
@@ -151,7 +163,7 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
     while True:
         page = fetch_page(params)
         for study in page.trials:
-            site = nearest_site(study, origin, search.country)
+            site = nearest_site(study, origin, search.country, search.radius_km)
             if site:
                 study.nearest_site = site
                 matches.append((site.distance_km, study))
@@ -166,5 +178,5 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
         trials=[study for _, study in matches],
         total_count=len(matches),
         next_page_token=None,
-        radius_km=NEARBY_KM,
+        radius_km=search.radius_km,
     )

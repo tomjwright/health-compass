@@ -118,8 +118,13 @@ npm --prefix web run dev
 
 Open http://localhost:3000 and enter a condition to search recruiting studies worldwide on
 ClinicalTrials.gov. Choose a country to filter studies and city suggestions. Choose a city or
-use your current location to see every matching study with a recruiting site within 100 km,
-closest first. Each row and map marker use the nearest qualifying site for that study.
+use your current location to set a distance cutoff from 1 to 1,000 km (100 km by default).
+Nearby results show every matching study with a recruiting site inside the cutoff, closest first.
+The map outlines the search area and shows the nearest qualifying site for each study.
+
+Worldwide and country results list recruiting locations and map one site per study where
+coordinates are available. **Show distance from me** adds a shared straight-line distance scale
+and highlights each study's closest mapped site. The browser calculates these comparisons.
 
 The page calls `POST /trials/search`. For nearby searches the API sends a rounded location to
 ClinicalTrials.gov and applies the exact straight-line cutoff locally. City lookup uses

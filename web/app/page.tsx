@@ -4,6 +4,7 @@ import { all } from "iso-3166-1";
 import dynamic from "next/dynamic";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Coordinates, TrialSelection, TrialSite } from "./trial-map";
+import { mappedSite, TrialResult, type Trial } from "./trial-results";
 
 const TrialMap = dynamic(() => import("./trial-map"), {
   ssr: false,
@@ -26,15 +27,7 @@ const countries = all()
 
 type City = Coordinates & { id: number; name: string; admin1?: string; country?: string };
 type CityLookup = { places: City[]; error?: string };
-type SearchError = { message: string; standaloneUrl?: string; pagination?: boolean };
-type Trial = {
-  nct_id: string;
-  title: string;
-  nearest_site: (Omit<TrialSite, "nct_id" | "site_status"> & {
-    city: string | null;
-    country: string | null;
-  }) | null;
-};
+type SearchError = { message: string; standaloneUrl?: string; placement?: "comparison" | "pagination" };
 type Results = {
   trials: Trial[];
   total_count: number | null;
@@ -51,6 +44,8 @@ export default function FindTrials() {
   const [countryCode, setCountryCode] = useState("");
   const [city, setCity] = useState("");
   const [location, setLocation] = useState<Coordinates | City | null>(null);
+  const [radius, setRadius] = useState("100");
+  const [comparisonOrigin, setComparisonOrigin] = useState<Coordinates | null>(null);
   const [cityLookup, setCityLookup] = useState<CityLookup | null>(null);
   const [results, setResults] = useState<Results | null>(null);
   const [selection, setSelection] = useState<TrialSelection | null>(null);
@@ -61,12 +56,22 @@ export default function FindTrials() {
   const countryName = countries.find(({ code }) => code === countryCode)?.name;
   const selectedCity = location && "name" in location ? location : null;
   const showCitySuggestions = !location && city.trim().length >= 2;
-  const scope = results?.radius_km != null
-    ? `within ${results.radius_km} km of ${selectedCity ? cityLabel(selectedCity) : "your location"}${countryName ? ` · ${countryName} only` : ""}`
+  const radiusKm = results?.radius_km ?? null;
+  const distanceScaleKm = radiusKm ?? (comparisonOrigin ? 20_000 : null);
+  const scope = radiusKm != null
+    ? `within ${radiusKm.toLocaleString("en")} km of ${selectedCity ? cityLabel(selectedCity) : "your location"}${countryName ? ` · ${countryName} only` : ""}`
     : countryName ? `in ${countryName}` : "worldwide";
-  const sites = useMemo(() => results?.trials.flatMap(({ nct_id, nearest_site }) => nearest_site
-    ? [{ ...nearest_site, nct_id, site_status: "RECRUITING" }]
-    : []) ?? [], [results]);
+  const sitesByTrial = useMemo(() => {
+    const sites = new Map<string, TrialSite>();
+    for (const trial of results?.trials ?? []) {
+      const site = mappedSite(trial, comparisonOrigin);
+      if (site) sites.set(trial.nct_id, site);
+    }
+    return sites;
+  }, [results, comparisonOrigin]);
+  const sites = useMemo(() => [...sitesByTrial.values()], [sitesByTrial]);
+  const showMap = sites.length > 0 || (location != null && radiusKm != null);
+  const canCompare = radiusKm == null && sites.length > 0;
   let cityMessage = "Looking up cities…";
   if (cityLookup) {
     cityMessage = cityLookup.error ?? (cityLookup.places.length ? "Choose a city." : "No matching cities.");
@@ -117,15 +122,18 @@ export default function FindTrials() {
     setError(null);
   }
 
-  function locate() {
+  function locate(compareDistances = false) {
     setError(null);
+    function reportError(locationError: SearchError) {
+      setError({ ...locationError, placement: compareDistances ? "comparison" : undefined });
+    }
     const embedded = window.self !== window.top;
     const embeddedLocationError = {
       message: "Location access was blocked here. Open Find Trials in its own tab to try again, or choose a city.",
       standaloneUrl: window.location.href,
     };
     if (!navigator.geolocation) {
-      setError(embedded ? embeddedLocationError : {
+      reportError(embedded ? embeddedLocationError : {
         message: "Current location is unavailable in this browser. Choose a city.",
       });
       return;
@@ -134,10 +142,17 @@ export default function FindTrials() {
     navigator.geolocation.getCurrentPosition(
       ({ coords: { latitude, longitude } }) => {
         const coordinates = { latitude, longitude };
+        if (compareDistances) {
+          setComparisonOrigin(coordinates);
+          setSelection(null);
+          setBusy("");
+          return;
+        }
         setLocation(coordinates);
         setCity("");
         setCityLookup(null);
-        if (searchCondition.length >= 2) {
+        const cutoff = Number(radius);
+        if (searchCondition.length >= 2 && Number.isInteger(cutoff) && cutoff >= 1 && cutoff <= 1000) {
           void searchTrials(coordinates);
         } else {
           setResults(null);
@@ -148,13 +163,13 @@ export default function FindTrials() {
       (failure) => {
         setBusy("");
         if (failure.code === failure.PERMISSION_DENIED) {
-          setError(embedded ? embeddedLocationError : {
+          reportError(embedded ? embeddedLocationError : {
             message: "Allow location for this site in your browser settings and try again, or choose a city.",
           });
         } else if (failure.code === failure.TIMEOUT) {
-          setError({ message: "The location request timed out. Try again or choose a city." });
+          reportError({ message: "The location request timed out. Try again or choose a city." });
         } else {
-          setError({ message: "Your device couldn’t determine its location. Check your device’s location settings or choose a city." });
+          reportError({ message: "Your device couldn’t determine its location. Check your device’s location settings or choose a city." });
         }
       },
       { timeout: 10000 },
@@ -188,6 +203,7 @@ export default function FindTrials() {
           condition: searchCondition,
           country: countryName ? (registryCountryNames[countryCode] ?? countryName) : null,
           origin: origin && { latitude: origin.latitude, longitude: origin.longitude },
+          ...(origin && { radius_km: Number(radius) }),
           page_token: pageToken,
         }),
       });
@@ -199,7 +215,7 @@ export default function FindTrials() {
         total_count: previous.total_count,
       } : page);
     } catch {
-      setError({ message: "Couldn’t search for trials. Try again in a moment.", pagination: Boolean(pageToken) });
+      setError({ message: "Couldn’t search for trials. Try again in a moment.", placement: pageToken ? "pagination" : undefined });
     } finally {
       setBusy("");
     }
@@ -259,11 +275,23 @@ export default function FindTrials() {
             <div className="locate-button">
               {location && !selectedCity
                 ? <button type="button" className="secondary" onClick={() => editLocation()}>Clear current location</button>
-                : <button type="button" className="secondary" onClick={locate}>Use current location</button>}
+                : <button type="button" className="secondary" onClick={() => locate()}>Use current location</button>}
             </div>
+            {location && <div className="radius-field">
+              <label>Distance cutoff (km)
+                <input type="number" min={1} max={1000} step={1} required value={radius}
+                  aria-describedby="radius-range" onChange={(event) => {
+                    setRadius(event.target.value);
+                    setResults(null);
+                    setSelection(null);
+                    setError(null);
+                  }} />
+              </label>
+              <span id="radius-range">1–1,000 km</span>
+            </div>}
             <button type="submit" className="search-button" ref={searchButton}>Search trials</button>
           </fieldset>
-          {error && !error.pagination && (
+          {error && !error.placement && (
             <p className="error" role="alert">
               {error.message} {error.standaloneUrl && (
                 <a href={error.standaloneUrl} target="_blank" rel="noopener noreferrer">Open in a new tab</a>
@@ -271,36 +299,55 @@ export default function FindTrials() {
             </p>
           )}
         </form>
-        <div className={results?.radius_km != null ? "explorer" : "explorer list-only"}>
-          <section className="results" aria-labelledby="results-heading">
-            <h2 id="results-heading">{results ? `Recruiting studies ${scope}` : "Trial results"}</h2>
-            <p className="result-status" role="status">{busy || resultMessage}</p>
-            {results?.radius_km != null && <p className="freshness">Closest recruiting sites first, by straight-line distance.</p>}
-            <ul className="trial-list">
-              {results?.trials.map((trial) => (
-                <li key={trial.nct_id}>
-                  <h3>{trial.nearest_site ? <button type="button" className="trial-focus"
-                      aria-pressed={selection?.nctId === trial.nct_id}
-                      onClick={() => setSelection({ nctId: trial.nct_id })}>
-                      {trial.title}
-                    </button> : trial.title}</h3>
-                  {trial.nearest_site && <p>
-                    {[trial.nearest_site.facility, trial.nearest_site.city, trial.nearest_site.country]
-                      .filter(Boolean).join(", ") || "Site name unavailable"} ·{" "}
-                    {trial.nearest_site.distance_km.toLocaleString("en", { maximumFractionDigits: 1 })} km
-                  </p>}
-                  <p><a href={`https://clinicaltrials.gov/study/${encodeURIComponent(trial.nct_id)}`}>
-                    {trial.nct_id} on ClinicalTrials.gov
-                  </a></p>
-                </li>
-              ))}
-            </ul>
-            {error?.pagination && <p className="error" role="alert">{error.message}</p>}
-            {results?.next_page_token && <button type="button" className="secondary" disabled={Boolean(busy)}
-              onClick={() => void searchTrials(location, results.next_page_token)}>Load more studies</button>}
-          </section>
-          {results?.radius_km != null && <TrialMap sites={sites} origin={location} selection={selection} />}
-        </div>
+        <section className={showMap ? "explorer" : "explorer list-only"} aria-labelledby="results-heading">
+          <div className="results-heading">
+            <div>
+              <h2 id="results-heading">{results ? `Recruiting studies ${scope}` : "Trial results"}</h2>
+              <p className="result-status" role="status">{busy || resultMessage}</p>
+            </div>
+            {canCompare && (
+              <button type="button" className="secondary" disabled={Boolean(busy)} onClick={() => {
+                if (comparisonOrigin) {
+                  setComparisonOrigin(null);
+                  setSelection(null);
+                } else {
+                  locate(true);
+                }
+              }}>{comparisonOrigin ? "Hide distances" : "Show distance from me"}</button>
+            )}
+            {error?.placement === "comparison" && <p className="error results-error" role="alert">
+              {error.message} {error.standaloneUrl && (
+                <a href={error.standaloneUrl} target="_blank" rel="noopener noreferrer">Open in a new tab</a>
+              )}
+            </p>}
+          </div>
+          {showMap && <div className="map-panel">
+            <TrialMap sites={sites} origin={location ?? comparisonOrigin} selection={selection} radiusKm={radiusKm} />
+            <div className="map-key">
+              {sites.length > 0 && <span><i /> One pin per mapped study</span>}
+              {(location || comparisonOrigin) && <span><i className="origin-marker" /> {selectedCity ? "Selected city" : "Your location"}</span>}
+              {radiusKm != null && <span><i className="radius-marker" /> {radiusKm.toLocaleString("en")} km cutoff</span>}
+            </div>
+          </div>}
+          {results && results.trials.length > 0 && (
+            <div className="results">
+              {distanceScaleKm != null && (
+                <div className="distance-scale">
+                  <p>{radiusKm == null ? "Straight-line distance to the closest mapped site" : "Closest recruiting sites first · straight-line distance"}</p>
+                  <div><span>0 km</span><span>{distanceScaleKm.toLocaleString("en")} km</span></div>
+                </div>
+              )}
+              <ul className="trial-list">
+                {results.trials.map((trial) => <TrialResult key={trial.nct_id} trial={trial}
+                  site={sitesByTrial.get(trial.nct_id)} scaleKm={distanceScaleKm}
+                  selected={selection?.nctId === trial.nct_id} onSelect={() => setSelection({ nctId: trial.nct_id })} />)}
+              </ul>
+              {error?.placement === "pagination" && <p className="error" role="alert">{error.message}</p>}
+              {results.next_page_token && <button type="button" className="secondary" disabled={Boolean(busy)}
+                onClick={() => void searchTrials(location, results.next_page_token)}>Load more studies</button>}
+            </div>
+          )}
+        </section>
         <footer>Confirm recruiting status and eligibility with the study team.</footer>
       </main>
     </>
