@@ -1,6 +1,6 @@
 "use client";
 
-import { circleMarker, latLngBounds, map, tileLayer, type LatLngTuple } from "leaflet";
+import { circleMarker, latLngBounds, map, tileLayer, type CircleMarker, type LatLngTuple, type Map as LeafletMap } from "leaflet";
 import { useEffect, useRef } from "react";
 
 export type Coordinates = {
@@ -17,10 +17,18 @@ export type TrialSite = Coordinates & {
 
 const localRadiusKm = 50;
 const maxFocusSites = 5;
-const maxFocusZoom = 12;
+const maxFocusZoom = 11;
+const siteZoom = 10;
 
-export default function TrialMap({ sites, origin }: { sites: TrialSite[]; origin: Coordinates | null }) {
+export type TrialSelection = { nctId: string };
+
+export default function TrialMap({ sites, origin, selection }: {
+  sites: TrialSite[];
+  origin: Coordinates | null;
+  selection: TrialSelection | null;
+}) {
   const container = useRef<HTMLDivElement>(null);
+  const mapState = useRef<{ view: LeafletMap; markers: Map<string, CircleMarker> } | null>(null);
 
   useEffect(() => {
     if (!container.current) return;
@@ -41,6 +49,7 @@ export default function TrialMap({ sites, origin }: { sites: TrialSite[]; origin
     const nearest = [...sites].sort((left, right) => left.distance_km - right.distance_km);
     const nearby = nearest.filter((site) => site.distance_km <= localRadiusKm).slice(0, maxFocusSites);
     const focusSites = new Set(nearby.length ? nearby : nearest.slice(0, 1));
+    const markers = new Map<string, CircleMarker>();
     for (const site of sites) {
       const color = site.site_status === "RECRUITING" ? "#08705b" : "#526784";
       // Plot across the antimeridian using the world copy closest to the search location.
@@ -48,13 +57,30 @@ export default function TrialMap({ sites, origin }: { sites: TrialSite[]; origin
       const point: LatLngTuple = [site.latitude, site.longitude + worldOffset];
       const label = document.createElement("span");
       label.textContent = site.facility ?? site.nct_id;
-      circleMarker(point, { radius: 8, color: "#fff", fillColor: color, fillOpacity: 1 })
+      const marker = circleMarker(point, { radius: 8, color: "#fff", fillColor: color, fillOpacity: 1 })
         .addTo(view).bindTooltip(label);
+      markers.set(site.nct_id, marker);
       if (!center || focusSites.has(site)) bounds.extend(point);
     }
     if (bounds.isValid()) view.fitBounds(bounds, { padding: [28, 28], maxZoom: maxFocusZoom, animate: false });
-    return () => { view.remove(); };
+    mapState.current = { view, markers };
+    return () => {
+      mapState.current = null;
+      view.remove();
+    };
   }, [sites, origin]);
+
+  useEffect(() => {
+    const state = mapState.current;
+    if (!state || !selection) return;
+    const marker = state.markers.get(selection.nctId);
+    if (!marker) return;
+    const { view } = state;
+    view.setView(marker.getLatLng(), Math.max(view.getZoom(), siteZoom), { animate: false });
+    marker.openTooltip();
+    container.current?.scrollIntoView({ block: "nearest" });
+    return () => { marker.closeTooltip(); };
+  }, [selection, sites, origin]);
 
   return <div ref={container} className="trial-map" role="region" aria-label="Trial site map" />;
 }
