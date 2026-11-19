@@ -103,6 +103,8 @@ def test_answers_with_facts_from_the_registry_and_notes_from_the_llm() -> None:
         ("NCT00000011", "Singapore", True, "It studies a hair serum."),
         ("NCT00000012", "Johor Bahru", True, "It studies a light treatment."),
     ]
+    assert "A study of a hair treatment." in model.prompts[-1]
+    assert "NCT00000011" not in model.prompts[-1]
     # The LLM never sees the location.
     assert not any("1.29" in prompt or "Singapore" in prompt for prompt in model.prompts)
 

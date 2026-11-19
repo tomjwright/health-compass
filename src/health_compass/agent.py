@@ -202,7 +202,7 @@ def expand_approval_search(search: ApprovalSearch) -> ApprovalSearch:
 
 
 class Note(BaseModel):
-    number: int
+    number: int = Field(description="The record's position in the numbered list, starting at 1.")
     note: str = Field(description="One sentence on what the record is about.")
 
 
@@ -477,12 +477,12 @@ class TrialAgent(RecordAgent):
 
     find = find_trials
 
-    def shown_to_writer(self, trial: Trial) -> str:
-        # The LLM sees each trial's ID, title and status: not its site or distance.
-        return f"{trial.nct_id}: {trial.title} ({trial.overall_status})"
-
     def shown_to_judge(self, trial: Trial) -> str:
         return f"Title: {trial.title}\nSummary: {trial.summary or 'none given'}"
+
+    def shown_to_writer(self, trial: Trial) -> str:
+        # Both models use the same evidence and the numbered list supplies the references.
+        return self.shown_to_judge(trial)
 
     def id_of(self, trial: Trial) -> str:
         return trial.nct_id
