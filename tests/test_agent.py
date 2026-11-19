@@ -229,7 +229,8 @@ def test_ask_says_when_the_registry_is_unavailable(
     monkeypatch.setattr("urllib.request.urlopen", unavailable)
     monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH))
     response = collect(api, start(api))
-    assert response.status_code == 502
+    # The Ask client treats 503 as a finished run, so the question can be resubmitted.
+    assert response.status_code == 503
     assert response.json() == {"detail": "ClinicalTrials.gov search is temporarily unavailable."}
 
 

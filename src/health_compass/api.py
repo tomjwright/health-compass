@@ -139,7 +139,7 @@ def ask_result(run_id: str) -> Run:
     if run.status == "SUCCESS":
         return Run(run_id=run_id, status="done", steps_done=done, answer=run.output)
     if isinstance(run.error, registry_trials.RegistryUnavailable):
-        raise HTTPException(502, registry_trials.REGISTRY_UNAVAILABLE)
+        raise HTTPException(503, registry_trials.REGISTRY_UNAVAILABLE)
     if isinstance(run.error, trials.TablesNotBuiltError):
         raise HTTPException(503, NOT_BUILT)
     if isinstance(run.error, approvals.ApprovalTablesNotBuiltError):
