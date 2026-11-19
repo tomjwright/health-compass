@@ -38,6 +38,8 @@ def setup_logging() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
+    # httpx logs every request's URL at INFO, and a search's URL can name a condition.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     # Uvicorn sets up its own plain-text handlers before loading the app. Make them write JSON,
     # but leave their levels and on/off settings (--log-level, --no-access-log) alone.
     for name in ("uvicorn", "uvicorn.access"):

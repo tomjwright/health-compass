@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Response
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel, Field, ValidationError
 
-from health_compass import approvals, registry_trials, trials
+from health_compass import approvals, registry_trials, research, trials
 from health_compass.agent import Answer, answer_question
 from health_compass.telemetry import setup_logging, setup_tracing
 
@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 NOT_BUILT = "The trial tables haven't been built yet."
 APPROVALS_NOT_BUILT = "The approval tables haven't been built yet."
+RESEARCH_UNAVAILABLE = "Europe PMC couldn't be reached. Try again later."
 # How long a run (with its question, location and answer) is kept before it is deleted.
 RUN_TTL = timedelta(minutes=int(os.environ.get("RUN_TTL_MINUTES", "60")))
 
@@ -84,6 +85,15 @@ def find_approvals(search: approvals.ApprovalSearch) -> approvals.ApprovalResult
         return approvals.find_approvals(search)
     except approvals.ApprovalTablesNotBuiltError:
         raise HTTPException(503, APPROVALS_NOT_BUILT) from None
+
+
+@app.post("/research")
+def find_papers(search: research.PaperSearch) -> research.PaperResults:
+    """The newest systematic reviews and randomised trials of a medicine for a condition."""
+    try:
+        return research.find_papers(search)
+    except research.ResearchUnavailableError:
+        raise HTTPException(503, RESEARCH_UNAVAILABLE) from None
 
 
 class Question(BaseModel):
