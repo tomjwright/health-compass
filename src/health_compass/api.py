@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel, Field
 
-from health_compass import trials
+from health_compass import approvals, trials
 from health_compass.agent import Answer, answer_question
 from health_compass.telemetry import setup_logging, setup_tracing
 
@@ -25,6 +25,7 @@ setup_tracing("health-compass-api")
 log = logging.getLogger(__name__)
 
 NOT_BUILT = "The trial tables haven't been built yet."
+APPROVALS_NOT_BUILT = "The approval tables haven't been built yet."
 # How long a run (with its question, location and answer) is kept before it is deleted.
 RUN_TTL = timedelta(minutes=int(os.environ.get("RUN_TTL_MINUTES", "60")))
 
@@ -57,6 +58,15 @@ def find_trials(search: trials.TrialSearch) -> trials.TrialResults:
         return trials.find_trials(search)
     except trials.TablesNotBuiltError:
         raise HTTPException(503, NOT_BUILT) from None
+
+
+@app.post("/approvals")
+def find_approvals(search: approvals.ApprovalSearch) -> approvals.ApprovalResults:
+    """US and EU medicines approved now for a condition, newest approval first."""
+    try:
+        return approvals.find_approvals(search)
+    except approvals.ApprovalTablesNotBuiltError:
+        raise HTTPException(503, APPROVALS_NOT_BUILT) from None
 
 
 class Question(BaseModel):
