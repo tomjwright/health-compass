@@ -138,6 +138,24 @@ The query is plain SQL in `src/health_compass/find_trials.sql`. The distance com
 haversine formula. Each request opens its own read-only DuckDB connection, so it reads the latest
 build.
 
+### Find approved medicines
+
+Once the approval tables are built, `POST /approvals` lists the medicines approved now for a
+condition: EU medicines that EMA lists as "Authorised" under the condition's MeSH heading, and US
+brand-name medicines (NDA and BLA applications) that are "Marketed" and whose FDA label's
+indications mention the condition or one of up to three other `terms` for it. Generics (ANDA) are
+left out: they copy a brand's label. Newest approval first.
+
+```bash
+curl -s localhost:8000/approvals -H 'content-type: application/json' \
+  -d '{"condition": "Alopecia Areata", "limit": 3}'
+```
+
+This returns Leqselvi (US, 2024), Litfulo (EU, 2023) and Litfulo (US, 2023), each with its
+holder, approval date, indications and a link to its FDA or EMA page. The query is plain SQL in
+`src/health_compass/find_approvals.sql`. US labels have no MeSH headings, so a word like
+"psoriasis" also finds older medicines whose label lists it among many conditions.
+
 ### Ask the agent
 
 `POST /ask` answers a question about trials near you through a LangGraph agent
