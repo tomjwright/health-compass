@@ -1,4 +1,6 @@
-{{ config(materialized='view') }}
-
-select load_id, data_timestamp, mode, since
-from {{ source('raw', 'clinicaltrials_loads') }}
+select
+    _dlt_load_id as load_id,
+    cast(data_timestamp as timestamp) as data_timestamp,
+    mode,
+    cast(since as date) as since
+from {{ source('clinicaltrials', 'loads') }}

@@ -12,7 +12,7 @@ models:
   health_compass:
     staging:
       +schema: staging
-      # Tables, not the usual views: the raw JSON is parsed once, not once per model.
+      # Tables, not the usual views: a view would point at raw.duckdb, which readers don't attach.
       +materialized: table
       +contract: { enforced: true }
     intermediate:

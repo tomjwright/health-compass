@@ -58,7 +58,6 @@ DOSING = Draft(summary="You should take 5 mg a day.", notes=[])
 
 @pytest.fixture(autouse=True)
 def tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("RAW_DATA_DIR", str(tmp_path / "raw"))
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
     near = trial("NCT00000011", site("Singapore", 1.29, 103.85))
     far = trial("NCT00000012", site("London", 51.51, -0.13))

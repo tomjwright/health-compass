@@ -12,12 +12,18 @@ SINGAPORE = {"latitude": 1.29, "longitude": 103.85}
 
 @pytest.fixture(autouse=True)
 def dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("RAW_DATA_DIR", str(tmp_path / "raw"))
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
 
 
 def site(city: str, lat: float, lon: float, status: str | None = "RECRUITING") -> dict[str, object]:
-    return {"city": city, "country": "X", "status": status, "geoPoint": {"lat": lat, "lon": lon}}
+    return {
+        "facility": f"{city} Hospital",
+        "city": city,
+        "state": "X",
+        "country": "X",
+        "status": status,
+        "geoPoint": {"lat": lat, "lon": lon},
+    }
 
 
 def trial(nct_id: str, *sites: dict[str, object]) -> dict[str, object]:

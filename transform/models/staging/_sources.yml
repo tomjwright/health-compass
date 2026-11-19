@@ -1,13 +1,20 @@
 version: 2
 
 sources:
-  - name: raw
-    description: Raw ClinicalTrials.gov data, loaded unchanged by `health_compass.load`.
+  - name: clinicaltrials
+    description: ClinicalTrials.gov trials, appended by dlt each load (`health_compass.ingest.clinicaltrials`).
+    database: raw_data
+    schema: clinicaltrials
     tables:
-      - name: clinicaltrials_loads
-        description: One row per complete load, from its manifest.json.
-      - name: clinicaltrials_studies
-        description: One row per trial per load, the trial's JSON exactly as the API returned it.
+      - name: loads
+        description: One row per load, with the version of the data it loaded.
+      - name: studies
+        description: One row per trial per load, with only the modules the models read.
+      - name: studies__protocol_section__design_module__phases
+      - name: studies__protocol_section__conditions_module__conditions
+      - name: studies__protocol_section__arms_interventions_module__interventions
+      - name: studies__protocol_section__contacts_locations_module__locations
+      - name: studies__derived_section__condition_browse_module__meshes
 
   - name: openfda
     description: openFDA's drug applications and labels, loaded by dlt (`health_compass.ingest.openfda`).

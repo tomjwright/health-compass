@@ -12,20 +12,20 @@ dosing advice, and it tells you what to ask your doctor.
 ## How it works
 
 ```
-ClinicalTrials.gov ─┬ DBOS workflow ─► raw JSON ─┐
-Europe PMC ─────────┘                             ├─► dbt (DuckDB) ─► marts ─┐
-openFDA, EMA ──────── dlt ─► raw.duckdb ──────────┘                          │
+ClinicalTrials.gov ─┐
+openFDA, EMA ───────┼─ dlt ─► raw.duckdb ─► dbt (DuckDB) ─► marts ───────────┐
+Europe PMC ─────────┘                                                        │
                                                                              ▼
 Next.js ◄── FastAPI ◄── LangGraph supervisor ─► trials / evidence / approvals agents
                           │  input check ─► specialists ─► verifier ─► output check
                           └─ OpenTelemetry traces + JSON logs ─► Jaeger / Langfuse
 ```
 
-- **Data:** each source lands unchanged as JSON, a schema check flags new or removed fields,
-  and dbt models it into DuckDB. The finished DuckDB file is swapped in whole, and the API
+- **Data:** dlt loads each source into `raw.duckdb`, unnested into tables, with a schema
+  contract: new columns are added, a column that changes type stops the load. dbt models it. The finished DuckDB file is swapped in whole, and the API
   and agents open it read-only.
-- **Durable execution:** ingestion, per-condition literature fetches and agent runs are DBOS
-  workflows on Postgres, so a crashed run resumes from its last finished step.
+- **Durable execution:** agent runs are DBOS workflows on Postgres, so a crashed run resumes
+  from its last finished step.
 - **Agents:** a LangGraph supervisor sends work to specialists. Every answer passes an input
   check, a verifier (each claim must match a cited source) and an output check.
 - **Release gate:** an eval suite of reference questions runs in CI and blocks a merge when
@@ -41,7 +41,7 @@ work the same in PowerShell, bash and zsh.
 uv sync
 cp .env.example .env
 docker compose up -d                      # Postgres (DBOS) + Jaeger (traces)
-uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials: ~2 min, 225 MB
+uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # all recruiting trials: ~3 min
 uv run --env-file .env python -m health_compass.ingest.openfda          # US drug approvals and labels: ~3 min
 uv run --env-file .env python -m health_compass.ingest.ema              # EU medicines: a few seconds
 uv run --env-file .env python -m health_compass.transform               # dbt build: ~1 min, ~1 GB file
@@ -185,32 +185,25 @@ uv run --env-file .env python -m health_compass.ingest.clinicaltrials   # first 
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials --max-pages 2   # quick test of the download
 ```
 
-A `--max-pages` run stops early, so it is marked incomplete and the transform skips it: run the
-full load once before building the tables.
+`src/health_compass/ingest/clinicaltrials.py` loads the trials with dlt into the
+`clinicaltrials` schema of `data/raw.duckdb`. Each load is appended, with its own `_dlt_load_id`.
 
-This is a DBOS workflow, saved step by step in Postgres. Each page of 1,000 trials is saved
-unchanged under `data/raw/clinicaltrials/<workflow id>/`, and `manifest.json` is written last.
-
-- **First run (`"mode": "full"`):** every recruiting trial, about 65,000 in 66 pages (225 MB).
-- **Every later run (`"mode": "incremental"`):** only the trials updated since the day before the
-  last complete load (`"since"`), in any status, so we see trials that stop recruiting. That's
-  about 1,000 trials in 1–2 pages a day. The day of overlap means a late update is never missed;
-  dbt drops the duplicates.
-
-Every load is kept: together they are the history that dbt replays.
-
-Each run is named after the version of the data it loads (`dataTimestamp` from the API's
-`/version`, e.g. `clinicaltrials-2026-11-16T10:00:05`), not the time it runs. ClinicalTrials.gov
-publishes new data about once a day. Running the command again:
-
-- **after a crash** resumes the run at the next page.
-- **after a page failed 3 times** starts a new attempt (`...-attempt-2`) that carries on from
-  that page, keeping the pages already saved.
-- **after a success** does nothing until newer data is published, then loads that.
-- **Schema change:** each run first compares the API's data model with
-  `src/health_compass/ingest/clinicaltrials_schema.json`. New fields are logged. Removed or
-  retyped fields stop the run. Update the dbt models, then run the command with
-  `--accept-schema` and commit the new snapshot.
+- **First run (`mode` = `full`):** every recruiting trial, about 65,000.
+- **Every later run (`mode` = `incremental`):** only the trials updated since the day before the
+  last load (`since`), in any status, so we see trials that stop recruiting. That's about 1,000
+  trials a day. The day of overlap means a late update is never missed; dbt drops the duplicates.
+- **Nothing new:** dlt saves the version of the data it loaded (`dataTimestamp` from the API's
+  `/version`). A run that finds the same version again does nothing.
+- **Only what we use:** `keep_used_fields` keeps the modules the dbt models read (identification,
+  status, design, eligibility, conditions, the lead sponsor, interventions, sites and MeSH
+  headings) and drops the rest (outcomes, references, results, ...), which would otherwise be
+  dozens of child tables. It also drops each site's contacts: people's names, phones and emails. dlt unnests the lists that are left into
+  `clinicaltrials.studies__protocol_section__conditions_module__conditions` and so on.
+- **Schema evolution:** the same `SCHEMA_CONTRACT` as below. `STUDY_COLUMNS` types the columns
+  dbt reads, so they exist from the first load and a type change stops the load. A field the API
+  removes isn't noticed by dlt; it becomes null, and the dbt tests on the marts catch it.
+- **Memory:** dlt writes `jsonl` load files (its default for DuckDB used 1.6 GB on 5 pages). A
+  full load takes about 3 minutes and peaks at about 1 GB; `raw.duckdb` is then about 800 MB.
 
 ### Load drug approvals
 
@@ -249,15 +242,14 @@ What they share (HTTP retries, the dlt pipeline, the schema contract) is in `com
 uv run --env-file .env python -m health_compass.transform
 ```
 
-Python loads each new complete load (its `manifest.json` says `"complete": true`) into two plain
-tables in `data/health_compass.duckdb`: `raw.clinicaltrials_loads` and `raw.clinicaltrials_studies`
-(one row per trial per load, the JSON unchanged), one page at a time. dbt only transforms, reading
-those tables as sources, in three layers. dbt also attaches `data/raw.duckdb` read-only,
-for the openFDA and EMA tables. Until both are loaded, the build skips the approvals tables. DuckDB may use at most `DUCKDB_MEMORY_LIMIT` (default
-`1GB`), so a full build runs on a small laptop: about 1.2 GB for the whole process.
+dbt attaches `data/raw.duckdb` read-only and builds `data/health_compass.duckdb` from it, in
+three layers. Until openFDA and EMA are both loaded, the build skips the approvals tables. DuckDB
+may use at most `DUCKDB_MEMORY_LIMIT` (default `1GB`), so a full build runs on a small laptop.
 
-- `staging`: append-only, one row per trial per load, the raw JSON renamed and typed. Each build
-  adds only the loads it hasn't seen yet.
+- `staging`: `stg_clinicaltrials__studies` is append-only, one row per trial per load, renamed and
+  typed. Each build adds only the loads it hasn't seen yet. Its lists (conditions, interventions,
+  sites, MeSH headings) have a staging table each, joined on `study_id`. They are tables, not
+  views: a view would point at `raw.duckdb`, which the API doesn't attach.
 - `intermediate`: `int_trial_versions` keeps one row per version of a trial, then views unnest
   the current version's conditions, interventions and sites.
 - The approvals' staging models are views: each load replaces the last, so there is nothing to
@@ -297,7 +289,7 @@ file and replays every raw load. Use it after changing staging, or if the DuckDB
 ## Roadmap
 
 1. Scaffold: tooling, CI, Docker Compose, OpenTelemetry and JSON logging
-2. ClinicalTrials.gov ingestion (DBOS workflow, raw JSON, schema-change check)
+2. ClinicalTrials.gov ingestion (dlt, incremental, schema contract)
 3. dbt staging and marts for trials, with contracts and tests
 4. Trial finder API (distance search in SQL)
 5. Find trials page (Next.js, Leaflet map)

@@ -32,7 +32,7 @@ def medicines() -> Iterator[Any]:
 
 
 def run_load() -> Any:
-    info = common.pipeline("ema").run(medicines())
+    info = common.pipeline("ema").run(medicines(), loader_file_format="jsonl")
     log.info("loaded EMA: %s", info)
     return info
 

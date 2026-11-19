@@ -1,4 +1,3 @@
-import gzip
 import json
 from datetime import date
 from pathlib import Path
@@ -9,7 +8,8 @@ import duckdb
 import pytest
 
 from health_compass import transform
-from health_compass.ingest import common
+from health_compass.ingest import clinicaltrials, common
+from health_compass.ingest.common import raw_warehouse_path
 
 FULL_STUDY = {
     "protocolSection": {
@@ -26,7 +26,10 @@ FULL_STUDY = {
         "contactsLocationsModule": {
             "locations": [
                 {
+                    "facility": "National Skin Centre",
+                    "status": "RECRUITING",
                     "city": "Singapore",
+                    "state": "Central",
                     "country": "Singapore",
                     "geoPoint": {"lat": 1.29, "lon": 103.85},
                 },
@@ -57,13 +60,8 @@ def updated(study: dict[str, Any], status: str, day: str) -> dict[str, Any]:
     return copy
 
 
-def save_load(name: str, studies: list[dict[str, Any]], complete: bool = True) -> None:
-    run_dir = transform.raw_dir() / name
-    run_dir.mkdir(parents=True)
-    page = json.dumps({"studies": studies}).encode()
-    (run_dir / "page-00001.json.gz").write_bytes(gzip.compress(page))
-    manifest = {"data_timestamp": name, "loaded_at": name, "complete": complete}
-    (run_dir / "manifest.json").write_text(json.dumps(manifest))
+def save_load(data_timestamp: str, studies: list[dict[str, Any]]) -> None:
+    clinicaltrials.load_studies(studies, data_timestamp)
 
 
 def query(sql: str) -> list[tuple[Any, ...]]:
@@ -73,15 +71,13 @@ def query(sql: str) -> list[tuple[Any, ...]]:
 
 @pytest.fixture(autouse=True)
 def dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("RAW_DATA_DIR", str(tmp_path / "raw"))
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
     save_approvals()
 
 
-def test_builds_the_star_schema_from_the_complete_loads() -> None:
+def test_builds_the_star_schema_from_the_loads() -> None:
     save_load("2026-11-15", [BARE_STUDY])
     save_load("2026-11-16", [FULL_STUDY, BARE_STUDY])
-    save_load("2026-11-17", [BARE_STUDY], complete=False)  # a --max-pages run: skipped
     transform.build()
 
     assert query(
@@ -108,12 +104,13 @@ def test_builds_the_star_schema_from_the_complete_loads() -> None:
 def test_keeps_each_version_of_a_trial_and_its_status_changes() -> None:
     save_load("2026-11-16", [FULL_STUDY])
     transform.build()
-    # The next day's update: the trial has stopped recruiting. Its first load is changed on disk
-    # too, to show the build parses only the new load.
-    first_page = transform.raw_dir() / "2026-11-16/page-00001.json.gz"
-    first_page.write_bytes(
-        gzip.compress(json.dumps({"studies": [FULL_STUDY, BARE_STUDY]}).encode())
-    )
+    # Its first load is changed in raw.duckdb too, to show the build reads only the new load.
+    with duckdb.connect(str(raw_warehouse_path())) as raw:
+        raw.execute(
+            "update clinicaltrials.studies"
+            " set protocol_section__identification_module__brief_title = 'Changed'"
+        )
+    # The next day's update: the trial has stopped recruiting.
     never_recruiting = updated(BARE_STUDY, "COMPLETED", "2026-11-17")
     never_recruiting["protocolSection"]["identificationModule"]["nctId"] = "NCT00000003"
     save_load("2026-11-17", [updated(FULL_STUDY, "COMPLETED", "2026-11-17"), never_recruiting])
@@ -132,11 +129,10 @@ def test_keeps_each_version_of_a_trial_and_its_status_changes() -> None:
     ) == [("NCT00000001", date(2026, 11, 17), "RECRUITING", "COMPLETED")]
     assert query("select count(*) from marts.fct_trial_sites") == [(2,)]  # current version only
 
-    transform.build(full_refresh=True)  # replays the raw loads, so picks up the changed page
-    assert query("select nct_id from marts.dim_trials where is_current order by 1") == [
-        ("NCT00000001",),
-        ("NCT00000002",),
-    ]
+    first_version = "select title from marts.dim_trials where not is_current"
+    assert query(first_version) == [("Oral minoxidil",)]
+    transform.build(full_refresh=True)  # replays the raw loads, so picks up the change
+    assert query(first_version) == [("Changed",)]
 
 
 def test_failed_build_leaves_the_live_database_alone() -> None:
@@ -150,16 +146,8 @@ def test_failed_build_leaves_the_live_database_alone() -> None:
     assert query("select nct_id from marts.dim_trials") == [("NCT00000001",)]
 
 
-def test_needs_a_complete_load() -> None:
-    save_load("2026-11-17", [FULL_STUDY], complete=False)
-    with pytest.raises(SystemExit, match="No complete"):
-        transform.build()
-
-
-def test_stops_on_a_complete_load_with_no_pages() -> None:
-    save_load("2026-11-17", [FULL_STUDY])
-    (transform.raw_dir() / "2026-11-17" / "page-00001.json.gz").unlink()
-    with pytest.raises(SystemExit, match="has no pages"):
+def test_needs_a_clinicaltrials_load() -> None:
+    with pytest.raises(SystemExit, match=r"No ClinicalTrials\.gov load"):
         transform.build()
 
 
@@ -222,7 +210,7 @@ def save_approvals() -> None:
 
 
 def test_builds_the_approvals_from_the_newest_load() -> None:
-    save_load("2026-11-16", [BARE_STUDY])
+    save_load("2026-11-16", [FULL_STUDY])
     transform.build()
     save_approvals()
     transform.build()  # the second load replaces the first rather than adding to it
@@ -261,7 +249,7 @@ def test_builds_the_trials_without_approvals_data(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("RAW_DUCKDB_PATH", str(tmp_path / "no-approvals" / "raw.duckdb"))
-    save_load("2026-11-16", [BARE_STUDY])
+    save_load("2026-11-16", [FULL_STUDY])
     transform.build()
     assert query("select count(*) from marts.dim_trials") == [(1,)]
     tables = query("select table_name from duckdb_tables() where schema_name = 'marts'")

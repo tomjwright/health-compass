@@ -74,7 +74,7 @@ def openfda_source() -> Any:
 
 
 def run_load() -> Any:
-    info = common.pipeline("openfda").run(openfda_source())
+    info = common.pipeline("openfda").run(openfda_source(), loader_file_format="jsonl")
     log.info("loaded openFDA: %s", info)
     return info
 
