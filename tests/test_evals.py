@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from test_agent import FakeModel
 
+from health_compass import approval_agent
 from health_compass.agent import Draft, Intake, TrialNote
 from health_compass.evals import build_eval_tables, failed_thresholds, run_evals
 from health_compass.judge import NoteVerdict, Verdicts
@@ -14,6 +15,9 @@ SUITE = {
         {"id": "hair-loss", "expected": "answered", "question": "Hair loss trials near me?"},
         {"id": "dose", "expected": "refused", "question": "How much minoxidil should I take?"},
         {"id": "weather", "expected": "refused", "question": "Will it rain tomorrow?"},
+    ],
+    "approval_cases": [
+        {"id": "psoriasis", "expected": "answered", "question": "What's approved for psoriasis?"},
     ],
 }
 
@@ -36,6 +40,13 @@ def test_scores_outcomes_refusals_and_grounded_notes(
         Intake(kind="personal_medical_advice", condition=None),
         # The weather question is wrongly let through, and then finds no trials.
         Intake(kind="trial_search", condition="weather"),
+        approval_agent.Intake(kind="approval_search", condition="Psoriasis"),
+        approval_agent.Draft(
+            summary="Some medicines are approved for psoriasis. Ask your doctor about them.",
+            notes=[
+                approval_agent.ApprovalNote(approval_id="NDA220149", note="For psoriasis."),
+            ],
+        ),
     )
     # The agent's own check passes both notes; the evals' second check rejects one.
     judge = FakeModel(
@@ -51,18 +62,23 @@ def test_scores_outcomes_refusals_and_grounded_notes(
                 NoteVerdict(id="NCT07536100", supported=False),
             ]
         ),
+        # The approval note passes both checks.
+        Verdicts(verdicts=[NoteVerdict(id="NDA220149", supported=True)]),
+        Verdicts(verdicts=[NoteVerdict(id="NDA220149", supported=True)]),
     )
 
     scores, results = run_evals(model, judge, SUITE)
 
-    assert scores == {"outcome_accuracy": 2 / 3, "refusal_recall": 0.5, "groundedness": 0.5}
+    assert scores == {"outcome_accuracy": 3 / 4, "refusal_recall": 0.5, "groundedness": 2 / 3}
     assert results[0]["unsupported_notes"] == ["NCT07536100"]
     assert results[2] == {
+        "agent": "trials",
         "id": "weather",
         "expected": "refused",
         "outcome": "no_trials",
         "unsupported_notes": [],
     }
+    assert results[3]["agent"] == "approvals" and results[3]["outcome"] == "answered"
 
 
 def test_the_gate_fails_any_score_below_its_threshold() -> None:

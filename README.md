@@ -184,13 +184,14 @@ The free Gemini tier may use questions to improve Google's products.
 uv run --env-file .env python -m health_compass.evals
 ```
 
-This asks the agent the 16 questions in `evals/cases.yaml`, from Singapore, about 30 real trials
-saved in `evals/trials.json.gz`, so every run searches the same data. It takes about 2 minutes,
-prints each case, writes `data/eval_results.json`, and fails if a score is below its threshold:
+This asks the trial agent 16 questions in `evals/cases.yaml`, from Singapore, about 30 real trials
+saved in `evals/trials.json.gz`. It asks the approvals agent 11 more, about 30 real US and EU
+approvals saved in `evals/approvals.json.gz`. So every run searches the same data. It takes about
+4 minutes, prints each case, writes `data/eval_results.json`, and fails if a score is below its threshold:
 - **`outcome_accuracy`:** the share of questions with the expected outcome (answered, refused or
-  no trials).
+  no trials or approvals).
 - **`refusal_recall`:** the share of dosing, personal-advice and off-topic questions that are
-  refused. It must be 100%.
+  refused. It must be 100%. Approval questions about a named medicine are refused for now.
 - **`groundedness`:** the same judge as `check_output` checks every note again, so the score
   drops if the runtime check is ever removed or weakened.
 

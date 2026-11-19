@@ -2,8 +2,9 @@
 
     uv run --env-file .env python -m health_compass.evals
 
-The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, so every run
-searches the same data. The cases and the thresholds are in evals/cases.yaml. CI runs this as
+The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, and the approvals
+are 30 real openFDA and EMA records in evals/approvals.json.gz, so every run searches the same
+data. The cases and the thresholds are in evals/cases.yaml. CI runs this as
 the release gate: a score below its threshold fails the build, so the change can't merge.
 """
 
@@ -16,13 +17,16 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import dlt
 import yaml
 from langchain_core.language_models import BaseChatModel
 
 from health_compass import transform
-from health_compass.agent import TrialAgent, chat_model, judge_model
+from health_compass.agent import Answer, TrialAgent, chat_model, judge_model
+from health_compass.approval_agent import ApprovalAgent, ApprovalAnswer
+from health_compass.ingest import common
 from health_compass.ingest.clinicaltrials import load_studies
-from health_compass.judge import unsupported_notes
+from health_compass.judge import unsupported_approval_notes, unsupported_notes
 from health_compass.telemetry import setup_logging
 
 log = logging.getLogger(__name__)
@@ -32,28 +36,47 @@ RESULTS_FILE = Path("data/eval_results.json")
 
 
 def build_eval_tables(workdir: Path) -> None:
-    """Builds the trial tables in `workdir` from the trials file, as one load."""
+    """Builds the trial and approval tables in `workdir` from the trials and approvals files."""
     os.environ["RAW_DUCKDB_PATH"] = str(workdir / "raw.duckdb")
     os.environ["DLT_DATA_DIR"] = str(workdir / "dlt")
     os.environ["DUCKDB_PATH"] = str(workdir / "health_compass.duckdb")
     page = json.loads(gzip.decompress((EVALS_DIR / "trials.json.gz").read_bytes()))
     load_studies(page["studies"], "2026-11-17T00:00:00")
+    approvals = json.loads(gzip.decompress((EVALS_DIR / "approvals.json.gz").read_bytes()))
+    common.pipeline("openfda").run(
+        [
+            dlt.resource(approvals["applications"], name="applications"),
+            dlt.resource(approvals["labels"], name="labels"),
+        ]
+    )
+    common.pipeline("ema").run(dlt.resource(approvals["medicines"], name="medicines"))
     transform.build()
 
 
 def run_evals(
     model: BaseChatModel, judge: BaseChatModel, suite: dict[str, Any]
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
-    """The scores, and each case's result, from asking the agent every question in the suite."""
-    agent = TrialAgent(model, judge)
+    """The scores, and each case's result, from asking the agents every question in the suite:
+    `cases` go to the trial agent and `approval_cases` to the approvals agent."""
+    trial_agent = TrialAgent(model, judge)
+    approval_agent = ApprovalAgent(model, judge)
+    cases = []
+    for case in suite["cases"]:
+        cases.append(("trials", case))
+    for case in suite.get("approval_cases", []):
+        cases.append(("approvals", case))
     results = []
     correct = 0
     should_refuse = 0
     refused = 0
     notes = 0
     unsupported_count = 0
-    for case in suite["cases"]:
-        answer = agent.ask(case["question"], suite["latitude"], suite["longitude"])
+    for agent, case in cases:
+        answer: Answer | ApprovalAnswer
+        if agent == "trials":
+            answer = trial_agent.ask(case["question"], suite["latitude"], suite["longitude"])
+        else:
+            answer = approval_agent.ask(case["question"])
         passed = answer.outcome == case["expected"]
         if passed:
             correct += 1
@@ -62,17 +85,25 @@ def run_evals(
             if answer.outcome == "refused":
                 refused += 1
         unsupported = []
-        if answer.outcome == "answered":
-            # The agent's own gate already ran the judge; checking again here makes the score
-            # drop if that gate is ever removed or weakened.
-            answer_notes = {}
+        # The agent's own gate already ran the judge; checking again here makes the score
+        # drop if that gate is ever removed or weakened.
+        if answer.outcome == "answered" and isinstance(answer, Answer):
+            trial_notes = {}
             for trial in answer.trials:
                 if trial.note is not None:
-                    answer_notes[trial.nct_id] = trial.note
-            notes += len(answer_notes)
-            unsupported = unsupported_notes(judge, answer.trials, answer_notes)
-            unsupported_count += len(unsupported)
+                    trial_notes[trial.nct_id] = trial.note
+            notes += len(trial_notes)
+            unsupported = unsupported_notes(judge, answer.trials, trial_notes)
+        elif answer.outcome == "answered" and isinstance(answer, ApprovalAnswer):
+            approval_notes = {}
+            for approval in answer.approvals:
+                if approval.note is not None:
+                    approval_notes[approval.approval_id] = approval.note
+            notes += len(approval_notes)
+            unsupported = unsupported_approval_notes(judge, answer.approvals, approval_notes)
+        unsupported_count += len(unsupported)
         result = {
+            "agent": agent,
             "id": case["id"],
             "expected": case["expected"],
             "outcome": answer.outcome,
@@ -81,7 +112,7 @@ def run_evals(
         print(("pass" if passed else "FAIL") + f"  {json.dumps(result)}")
         results.append(result)
     scores = {
-        "outcome_accuracy": correct / len(suite["cases"]),
+        "outcome_accuracy": correct / len(cases),
         "refusal_recall": refused / should_refuse if should_refuse else 1.0,
         "groundedness": (notes - unsupported_count) / notes if notes else 1.0,
     }
