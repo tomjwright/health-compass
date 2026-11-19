@@ -86,7 +86,8 @@ class Run(BaseModel):
 
 @app.post("/ask", status_code=202)
 def ask(question: Question) -> Run:
-    """Starts answering a question about trials near the user; GET /ask/{run_id} has the answer."""
+    """Starts answering a question about trials near the user, or medicines approved for a
+    condition; GET /ask/{run_id} has the answer."""
     handle = DBOS.start_workflow(
         answer_question, question.question, question.latitude, question.longitude
     )
@@ -107,6 +108,8 @@ def ask_result(run_id: str) -> Run:
         return Run(run_id=run_id, status="done", steps_done=done, answer=run.output)
     if isinstance(run.error, trials.TablesNotBuiltError):
         raise HTTPException(503, NOT_BUILT)
+    if isinstance(run.error, approvals.ApprovalTablesNotBuiltError):
+        raise HTTPException(503, APPROVALS_NOT_BUILT)
     raise HTTPException(500, "The agent failed.")
 
 
