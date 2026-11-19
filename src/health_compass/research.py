@@ -89,7 +89,7 @@ def find_papers(search: PaperSearch) -> PaperResults:
         "query": search_query(search),
         "format": "json",
         "resultType": "core",
-        "sort": "P_PDATE_D desc",
+        "sort": "FIRST_PDATE_D desc",
         "pageSize": search.limit,
     }
 
@@ -102,7 +102,7 @@ def find_papers(search: PaperSearch) -> PaperResults:
 
     try:
         found = common.with_retries(SEARCH_URL, attempt)
-        papers = [paper(result) for result in found["resultList"]["result"]]
+        papers = [p for result in found["resultList"]["result"] if (p := paper(result))]
     except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as error:
         # Only the error's type is kept: it is saved by DBOS and must be picklable.
         raise ResearchUnavailableError(type(error).__name__) from None
@@ -110,15 +110,28 @@ def find_papers(search: PaperSearch) -> PaperResults:
     return PaperResults(papers=papers)
 
 
-def paper(result: dict[str, Any]) -> Paper:
+def paper_type(result: dict[str, Any]) -> str | None:
+    """The strongest of the paper's types, which Europe PMC also writes as "systematic-review"."""
     types = result.get("pubTypeList", {}).get("pubType", [])
+    written = {name.lower().replace("-", " ") for name in types}
+    for name, label in PAPER_TYPES.items():
+        if name.lower().replace("-", " ") in written:
+            return label
+    return None
+
+
+def paper(result: dict[str, Any]) -> Paper | None:
+    """The paper, or None if it is none of PAPER_TYPES (Europe PMC's filter matches others)."""
+    kind = paper_type(result)
+    if kind is None:
+        return None
     published = result.get("firstPublicationDate")
     return Paper(
         pmid=result["pmid"],
         title=plain(result["title"]),
         journal=result.get("journalInfo", {}).get("journal", {}).get("title"),
         published_on=date.fromisoformat(published) if published else None,
-        paper_type=next(label for name, label in PAPER_TYPES.items() if name in types),
+        paper_type=kind,
         abstract=plain(result["abstractText"]),
         source_url=f"https://europepmc.org/article/MED/{result['pmid']}",
     )

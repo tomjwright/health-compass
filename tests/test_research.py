@@ -58,7 +58,7 @@ def test_sends_only_the_names_and_keeps_reviews_and_trials_newest_first(
         'AND (PUB_TYPE:"Systematic Review" OR PUB_TYPE:"Meta-Analysis" '
         'OR PUB_TYPE:"Randomized Controlled Trial") AND SRC:MED AND HAS_ABSTRACT:y'
     )
-    assert (params["sort"], params["pageSize"]) == ("P_PDATE_D desc", "2")
+    assert (params["sort"], params["pageSize"]) == ("FIRST_PDATE_D desc", "2")
     [paper] = papers
     # The strongest type of evidence is kept, and the markup is removed.
     assert paper.paper_type == "systematic review"
@@ -66,6 +66,16 @@ def test_sends_only_the_names_and_keeps_reviews_and_trials_newest_first(
     assert paper.abstract == "Results Tirzepatide lowered HbA1c more than placebo."
     assert paper.source_url == "https://europepmc.org/article/MED/40000001"
     assert str(paper.published_on) == "2026-05-01"
+
+
+def test_reads_types_written_with_hyphens_and_skips_papers_of_other_types(
+    europepmc: Replier,
+) -> None:
+    hyphenated = {**RESULT, "pmid": "2", "pubTypeList": {"pubType": ["systematic-review"]}}
+    other = {**RESULT, "pmid": "3", "pubTypeList": {"pubType": ["Journal Article"]}}
+    europepmc(found(hyphenated, other))
+    papers = find_papers(SEARCH).papers
+    assert [(paper.pmid, paper.paper_type) for paper in papers] == [("2", "systematic review")]
 
 
 def test_a_quote_in_a_name_cannot_change_the_query() -> None:
