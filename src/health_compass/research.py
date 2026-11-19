@@ -5,6 +5,7 @@ Unlike trials and approvals, papers are searched live: there are too many to loa
 medicine's and the condition's names are sent, never the user's question or location.
 """
 
+import html
 import logging
 import re
 from datetime import date
@@ -138,5 +139,6 @@ def paper(result: dict[str, Any]) -> Paper | None:
 
 
 def plain(text: str) -> str:
-    """Europe PMC marks up titles and abstracts with HTML, e.g. <h4>Methods</h4>."""
-    return " ".join(TAG.sub(" ", text).split())
+    """Europe PMC marks up titles and abstracts with HTML, e.g. <h4>Methods</h4>, and sometimes
+    escapes it once more (&lt;i&gt;)."""
+    return " ".join(TAG.sub(" ", html.unescape(TAG.sub(" ", text))).split())

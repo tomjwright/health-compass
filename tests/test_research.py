@@ -11,7 +11,7 @@ from health_compass.research import PaperSearch, ResearchUnavailableError, find_
 
 RESULT = {
     "pmid": "40000001",
-    "title": "Tirzepatide versus placebo in type 2 diabetes: a <i>systematic</i> review",
+    "title": "Tirzepatide in type 2 diabetes: a &lt;i&gt;systematic&lt;/i&gt; review",
     "journalInfo": {"journal": {"title": "Diabetes Care"}},
     "firstPublicationDate": "2026-05-01",
     "pubTypeList": {"pubType": ["Meta-Analysis", "Systematic Review", "Journal Article"]},
@@ -62,7 +62,7 @@ def test_sends_only_the_names_and_keeps_reviews_and_trials_newest_first(
     [paper] = papers
     # The strongest type of evidence is kept, and the markup is removed.
     assert paper.paper_type == "systematic review"
-    assert paper.title == "Tirzepatide versus placebo in type 2 diabetes: a systematic review"
+    assert paper.title == "Tirzepatide in type 2 diabetes: a systematic review"
     assert paper.abstract == "Results Tirzepatide lowered HbA1c more than placebo."
     assert paper.source_url == "https://europepmc.org/article/MED/40000001"
     assert str(paper.published_on) == "2026-05-01"
