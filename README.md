@@ -109,6 +109,20 @@ where condition_name ilike '%alopecia%';
 
 ### Find trials
 
+With the API running and the trial tables built, install [Node.js 22+](https://nodejs.org/)
+and run this from the repo root:
+
+```bash
+npm --prefix web ci
+npm --prefix web run dev
+```
+
+Open http://localhost:3000 and enter a condition. Choose a country to narrow city suggestions
+as you type, then select a city and search. You can also use your current location.
+The map shows the site listed for each trial. City lookup uses Open-Meteo (GeoNames) and the
+map uses OpenStreetMap tiles. For a FastAPI server on a different address, set
+`HEALTH_COMPASS_API_URL` in `web/.env.local` before starting Next.js.
+
 Once the trial tables are built (see below), `POST /trials` finds trials for a condition, each at
 its nearest recruiting site (or its nearest site, if none is recruiting; `site_status` says
 which). Recruiting trials come first, nearest first, then trials that have stopped recruiting
