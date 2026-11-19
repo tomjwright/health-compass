@@ -3,7 +3,7 @@
 import { all } from "iso-3166-1";
 import dynamic from "next/dynamic";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { Coordinates, TrialSite } from "./trial-map";
+import type { Coordinates, TrialSelection, TrialSite } from "./trial-map";
 
 const TrialMap = dynamic(() => import("./trial-map"), {
   ssr: false,
@@ -42,6 +42,7 @@ export default function FindTrials() {
   const [location, setLocation] = useState<Coordinates | City | null>(null);
   const [cityLookup, setCityLookup] = useState<CityLookup | null>(null);
   const [results, setResults] = useState<Results | null>(null);
+  const [selection, setSelection] = useState<TrialSelection | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<SearchError | null>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
@@ -92,6 +93,7 @@ export default function FindTrials() {
     setLocation(null);
     setCityLookup(null);
     setResults(null);
+    setSelection(null);
     setError(null);
   }
 
@@ -118,8 +120,9 @@ export default function FindTrials() {
         setCityLookup(null);
         if (searchCondition.length >= 2) {
           void searchTrials(coordinates);
-        } else {
-          setResults(null);
+          } else {
+            setResults(null);
+            setSelection(null);
           setBusy("");
         }
       },
@@ -155,6 +158,7 @@ export default function FindTrials() {
 
   async function searchTrials({ latitude, longitude }: Coordinates) {
     setResults(null);
+    setSelection(null);
     setBusy("Searching for trials…");
     try {
       const response = await fetch("/api/trials", {
@@ -241,16 +245,20 @@ export default function FindTrials() {
                   <span className={trial.site_status === "RECRUITING" ? "badge recruiting" : "badge"}>
                     {trial.site_status ? `Site · ${status(trial.site_status)}` : "Site status unavailable"}
                   </span>
-                  <h3><a href={`https://clinicaltrials.gov/study/${encodeURIComponent(trial.nct_id)}`}>
+                  <h3><button type="button" className="trial-focus"
+                    aria-pressed={selection?.nctId === trial.nct_id}
+                    onClick={() => setSelection({ nctId: trial.nct_id })}>
                     {trial.title ?? trial.nct_id}
-                  </a></h3>
+                  </button></h3>
                   <p>{[trial.facility, trial.city, trial.country].filter(Boolean).join(", ") || "Site name unavailable"} · {trial.distance_km.toLocaleString("en")} km</p>
-                  <p>{trial.nct_id} · Trial status {status(trial.overall_status)}</p>
+                  <p><a href={`https://clinicaltrials.gov/study/${encodeURIComponent(trial.nct_id)}`}>
+                    {trial.nct_id} on ClinicalTrials.gov
+                  </a> · Trial status {status(trial.overall_status)}</p>
                 </li>
               ))}
             </ul>
           </section>
-          <TrialMap sites={results?.trials ?? noSites} origin={location} />
+          <TrialMap sites={results?.trials ?? noSites} origin={location} selection={selection} />
         </div>
         <footer>Confirm recruiting status and eligibility with the study team.</footer>
       </main>
