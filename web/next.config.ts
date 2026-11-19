@@ -7,7 +7,7 @@ const config: NextConfig = {
   async rewrites() {
     return [
       { source: "/api/trials", destination: `${api}/trials` },
-      { source: "/api/trials/worldwide", destination: `${api}/trials/worldwide` },
+      { source: "/api/trials/search", destination: `${api}/trials/search` },
     ];
   },
 };

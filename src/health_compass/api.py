@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Response
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel, Field, ValidationError
 
-from health_compass import approvals, trials, worldwide_trials
+from health_compass import approvals, registry_trials, trials
 from health_compass.agent import Answer, answer_question
 from health_compass.telemetry import setup_logging, setup_tracing
 
@@ -60,15 +60,19 @@ def find_trials(search: trials.TrialSearch) -> trials.TrialResults:
         raise HTTPException(503, NOT_BUILT) from None
 
 
-@app.post("/trials/worldwide")
-def find_worldwide_trials(
-    search: worldwide_trials.WorldwideSearch, response: Response
-) -> worldwide_trials.WorldwideResults:
-    """Recruiting studies from the live ClinicalTrials.gov search, without a location."""
+@app.post("/trials/search")
+def search_recruiting_trials(
+    search: registry_trials.RegistrySearch, response: Response
+) -> registry_trials.RegistryResults:
+    """Recruiting studies from ClinicalTrials.gov with optional location filters."""
     try:
-        results = worldwide_trials.search_registry(search)
+        results = registry_trials.search_registry(search)
     except (OSError, ValidationError):
-        raise HTTPException(502, "ClinicalTrials.gov search is temporarily unavailable.") from None
+        raise HTTPException(
+            502,
+            "ClinicalTrials.gov search is temporarily unavailable.",
+            headers={"Cache-Control": "no-store"},
+        ) from None
     response.headers["Cache-Control"] = "no-store"
     return results
 

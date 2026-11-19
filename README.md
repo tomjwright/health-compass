@@ -109,19 +109,22 @@ where condition_name ilike '%alopecia%';
 
 ### Find trials
 
-With the API running and the trial tables built, install [Node.js 22+](https://nodejs.org/)
-and run this from the repo root:
+With the API running, install [Node.js 22+](https://nodejs.org/) and run this from the repo root:
 
 ```bash
 npm --prefix web ci
 npm --prefix web run dev
 ```
 
-Open http://localhost:3000 and enter a condition. Choose a country to narrow city suggestions
-as you type, then select a city and search. You can also use your current location.
-The map shows the site listed for each trial. City lookup uses Open-Meteo (GeoNames) and the
-map uses OpenStreetMap tiles. For a FastAPI server on a different address, set
-`HEALTH_COMPASS_API_URL` in `web/.env.local` before starting Next.js.
+Open http://localhost:3000 and enter a condition to search recruiting studies worldwide on
+ClinicalTrials.gov. Choose a country to filter studies and city suggestions. Choose a city or
+use your current location to see every matching study with a recruiting site within 100 km,
+closest first. Each row and map marker use the nearest qualifying site for that study.
+
+The page calls `POST /trials/search`. For nearby searches the API sends a rounded location to
+ClinicalTrials.gov and applies the exact straight-line cutoff locally. City lookup uses
+Open-Meteo (GeoNames), and the map uses OpenStreetMap tiles. For a FastAPI server on a different
+address, set `HEALTH_COMPASS_API_URL` in `web/.env.local` before starting Next.js.
 
 Once the trial tables are built (see below), `POST /trials` finds trials for a condition, each at
 its nearest recruiting site (or its nearest site, if none is recruiting; `site_status` says
