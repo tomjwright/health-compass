@@ -3,7 +3,7 @@
 import { all } from "iso-3166-1";
 import dynamic from "next/dynamic";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { TrialSite } from "./trial-map";
+import type { Coordinates, TrialSite } from "./trial-map";
 
 const TrialMap = dynamic(() => import("./trial-map"), {
   ssr: false,
@@ -15,7 +15,6 @@ const countries = all()
   .map(({ alpha2 }) => ({ code: alpha2, name: regionNames.of(alpha2) ?? alpha2 }))
   .sort((left, right) => left.name.localeCompare(right.name, "en"));
 
-type Coordinates = { latitude: number; longitude: number };
 type City = Coordinates & { id: number; name: string; admin1?: string; country?: string };
 type CityLookup = { places: City[]; error?: string };
 type SearchError = { message: string; standaloneUrl?: string };
@@ -24,7 +23,6 @@ type Trial = TrialSite & {
   city: string | null;
   country: string | null;
   overall_status: string;
-  distance_km: number;
 };
 type Results = { trials: Trial[]; data_as_of: string };
 
@@ -252,7 +250,7 @@ export default function FindTrials() {
               ))}
             </ul>
           </section>
-          <TrialMap sites={results?.trials ?? noSites} />
+          <TrialMap sites={results?.trials ?? noSites} origin={location} />
         </div>
         <footer>Confirm recruiting status and eligibility with the study team.</footer>
       </main>
