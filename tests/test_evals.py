@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from test_agent import FakeModel
 
-from health_compass.agent import Draft, Intake, TrialNote
+from health_compass.agent import Draft, Intake, Note
 from health_compass.evals import build_eval_tables, failed_thresholds, run_evals
 from health_compass.judge import NoteVerdict, Verdicts
 
@@ -26,8 +26,8 @@ def test_scores_outcomes_refusals_and_grounded_notes(
     draft = Draft(
         summary="Two trials match. Talk to your doctor before joining one.",
         notes=[
-            TrialNote(nct_id="NCT07368842", note="It studies scalp hair in severe obesity."),
-            TrialNote(nct_id="NCT07536100", note="It cures baldness in a week."),
+            Note(number=1, note="It studies scalp hair in severe obesity."),
+            Note(number=2, note="It cures baldness in a week."),
         ],
     )
     model = FakeModel(
@@ -41,14 +41,14 @@ def test_scores_outcomes_refusals_and_grounded_notes(
     judge = FakeModel(
         Verdicts(
             verdicts=[
-                NoteVerdict(nct_id="NCT07368842", supported=True),
-                NoteVerdict(nct_id="NCT07536100", supported=True),
+                NoteVerdict(number=1, supported=True),
+                NoteVerdict(number=2, supported=True),
             ]
         ),
         Verdicts(
             verdicts=[
-                NoteVerdict(nct_id="NCT07368842", supported=True),
-                NoteVerdict(nct_id="NCT07536100", supported=False),
+                NoteVerdict(number=1, supported=True),
+                NoteVerdict(number=2, supported=False),
             ]
         ),
     )

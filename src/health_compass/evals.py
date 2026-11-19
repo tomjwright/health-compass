@@ -20,9 +20,8 @@ import yaml
 from langchain_core.language_models import BaseChatModel
 
 from health_compass import transform
-from health_compass.agent import TrialAgent, chat_model, judge_model
+from health_compass.agent import TRIALS, Agent, chat_model, judge_model, judge_notes
 from health_compass.ingest.clinicaltrials import load_studies
-from health_compass.judge import unsupported_notes
 from health_compass.telemetry import setup_logging
 
 log = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ def run_evals(
     model: BaseChatModel, judge: BaseChatModel, suite: dict[str, Any]
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     """The scores, and each case's result, from asking the agent every question in the suite."""
-    agent = TrialAgent(model, judge)
+    agent = Agent(model, judge)
     results = []
     correct = 0
     should_refuse = 0
@@ -66,11 +65,12 @@ def run_evals(
             # The agent's own gate already ran the judge; checking again here makes the score
             # drop if that gate is ever removed or weakened.
             answer_notes = {}
-            for trial in answer.trials:
+            for number, trial in enumerate(answer.trials, 1):
                 if trial.note is not None:
-                    answer_notes[trial.nct_id] = trial.note
+                    answer_notes[number] = trial.note
             notes += len(answer_notes)
-            unsupported = unsupported_notes(judge, answer.trials, answer_notes)
+            numbers = judge_notes(judge, TRIALS, answer.trials, answer_notes)
+            unsupported = [answer.trials[number - 1].nct_id for number in numbers]
             unsupported_count += len(unsupported)
         result = {
             "id": case["id"],

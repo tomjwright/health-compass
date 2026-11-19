@@ -13,7 +13,7 @@ from test_api import SINGAPORE, site, trial
 from test_transform import save_load
 
 from health_compass import agent, transform
-from health_compass.agent import Draft, Intake, TrialAgent, TrialNote
+from health_compass.agent import Agent, Draft, Intake, Note
 from health_compass.api import app, delete_old_runs
 from health_compass.judge import NoteVerdict, Verdicts
 
@@ -39,8 +39,8 @@ class ApprovingJudge(FakeModel):
     def invoke(self, messages: list[tuple[str, str]]) -> Any:
         self.prompts.append("\n".join(text for _, text in messages))
         verdicts = []
-        for nct_id in re.findall(r"^(NCT\d{8})$", messages[-1][1], re.MULTILINE):
-            verdicts.append(NoteVerdict(nct_id=nct_id, supported=True))
+        for number in re.findall(r"^(\d+)$", messages[-1][1], re.MULTILINE):
+            verdicts.append(NoteVerdict(number=int(number), supported=True))
         return Verdicts(verdicts=verdicts)
 
 
@@ -48,11 +48,11 @@ SEARCH = Intake(kind="trial_search", condition="alopecia")
 GOOD = Draft(
     summary="Two trials match. Talk to your doctor before joining one.",
     notes=[
-        TrialNote(nct_id="NCT00000011", note="It studies a hair serum."),
-        TrialNote(nct_id="NCT00000012", note="It studies a light treatment."),
+        Note(number=1, note="It studies a hair serum."),
+        Note(number=2, note="It studies a light treatment."),
     ],
 )
-INVENTED = Draft(summary="One trial.", notes=[TrialNote(nct_id="NCT09999999", note="Made up.")])
+INVENTED = Draft(summary="One trial.", notes=[Note(number=3, note="Made up.")])
 DOSING = Draft(summary="You should take 5 mg a day.", notes=[])
 
 
@@ -72,7 +72,7 @@ def ask(
 ) -> agent.Answer:
     if judge is None:
         judge = ApprovingJudge()
-    return TrialAgent(model, judge).ask(question, **SINGAPORE)
+    return Agent(model, judge).ask(question, **SINGAPORE)
 
 
 def test_answers_with_facts_from_the_tables_and_notes_from_the_llm() -> None:
@@ -105,27 +105,27 @@ def test_retries_once_when_a_draft_cites_a_trial_it_was_not_given() -> None:
     model = FakeModel(SEARCH, INVENTED, GOOD)
     answer = ask(model)
     assert answer.outcome == "answered"
-    assert "NCT09999999 is not one of the trials given" in model.prompts[-1]
+    assert "3 is not one of the trials given" in model.prompts[-1]
 
 
 def test_retries_when_the_judge_finds_a_note_its_record_does_not_support() -> None:
     model = FakeModel(SEARCH, GOOD, GOOD)
     rejects_one = Verdicts(
         verdicts=[
-            NoteVerdict(nct_id="NCT00000011", supported=True),
-            NoteVerdict(nct_id="NCT00000012", supported=False),
+            NoteVerdict(number=1, supported=True),
+            NoteVerdict(number=2, supported=False),
         ]
     )
     approves_both = Verdicts(
         verdicts=[
-            NoteVerdict(nct_id="NCT00000011", supported=True),
-            NoteVerdict(nct_id="NCT00000012", supported=True),
+            NoteVerdict(number=1, supported=True),
+            NoteVerdict(number=2, supported=True),
         ]
     )
     judge = FakeModel(rejects_one, approves_both)
     answer = ask(model, judge=judge)
     assert answer.outcome == "answered"
-    assert "the note on NCT00000012 says something its record doesn't" in model.prompts[-1]
+    assert "the note on 2 says something its record doesn't" in model.prompts[-1]
     # The judge sees each trial's record and the note on it, never the location.
     assert "Title: " in judge.prompts[0] and "Note: It studies a hair serum." in judge.prompts[0]
     assert not any("Singapore" in prompt for prompt in judge.prompts)
@@ -188,7 +188,7 @@ def test_ask_endpoint_answers_and_keeps_the_answer_until_the_run_expires(
     run_id = start(api)
     body = collect(api, run_id).json()
     assert body["answer"]["outcome"] == "answered"
-    assert body["steps_done"] == ["check_input", "find_trials", "write_answer", "check_output"]
+    assert body["steps_done"] == ["route", "find_trials", "write_answer", "check_output"]
     # Reading the answer again (say, after a refresh) still works.
     assert api.get(f"/ask/{run_id}").json()["answer"]["outcome"] == "answered"
 
