@@ -4,111 +4,133 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApprovalResult, PaperResult, type Approval, type Paper } from "./results";
 import styles from "./medicines.module.css";
 
-type Mode = "approvals" | "research";
-type Results = { mode: "approvals"; approvals: Approval[] } | { mode: "research"; papers: Paper[] };
+type Query = { condition: string; terms: string[] };
+type ApprovalResults = { approvals: Approval[]; search: Query };
+type Research = { index: number; papers?: Paper[]; error?: string };
+
+async function searchCatalog<T>(resource: "approvals" | "research", body: object, controller: AbortController): Promise<T> {
+  const response = await fetch(`/api/catalog/${resource}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(75_000)]),
+  });
+  if (!response.ok) throw new Error(`Search failed (${response.status})`);
+  return response.json();
+}
 
 export default function Medicines() {
-  const [mode, setMode] = useState<Mode>("approvals");
   const [condition, setCondition] = useState("");
-  const [medicine, setMedicine] = useState("");
-  const [alternateTerms, setAlternateTerms] = useState("");
-  const [results, setResults] = useState<Results | null>(null);
+  const [results, setResults] = useState<{ query: Query; approvals: Approval[] } | null>(null);
+  const [research, setResearch] = useState<Research | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const request = useRef<AbortController | null>(null);
-  const medicineInput = useRef<HTMLInputElement>(null);
+  const approvalsRequest = useRef<AbortController | null>(null);
+  const researchRequest = useRef<AbortController | null>(null);
 
-  useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => () => {
+    approvalsRequest.current?.abort();
+    researchRequest.current?.abort();
+  }, []);
 
-  function changeMode(next: Mode) {
-    if (next === mode) return;
-    request.current?.abort();
-    setMode(next);
-    setResults(null);
-    setBusy(false);
-    setError("");
+  async function loadResearch(query: Query, index: number, medicine: string) {
+    researchRequest.current?.abort();
+    const controller = new AbortController();
+    researchRequest.current = controller;
+    setResearch({ index });
+    try {
+      const { papers } = await searchCatalog<{ papers: Paper[] }>("research", { ...query, medicine, limit: 10 }, controller);
+      if (!controller.signal.aborted) setResearch({ index, papers });
+    } catch {
+      if (!controller.signal.aborted) setResearch({ index, error: "Research is temporarily unavailable." });
+    }
   }
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const name = condition.trim();
+    if (name.length < 2) {
+      setError("Enter a condition.");
+      return;
+    }
+    approvalsRequest.current?.abort();
+    researchRequest.current?.abort();
+    const controller = new AbortController();
+    approvalsRequest.current = controller;
     setError("");
     setResults(null);
-    const name = condition.trim();
-    const ingredient = medicine.trim();
-    const terms = alternateTerms.split(";").map(term => term.trim()).filter(Boolean);
-    if (name.length < 2 || (mode === "research" && ingredient.length < 2)) {
-      setError(mode === "research" ? "Enter a condition and an active ingredient." : "Enter a condition.");
-      return;
-    }
-    if (terms.length > 3 || terms.some(term => term.length < 2 || term.length > 100)) {
-      setError("Enter up to three other names for the condition, each 2–100 characters.");
-      return;
-    }
-    request.current?.abort();
-    const controller = new AbortController();
-    request.current = controller;
+    setResearch(null);
     setBusy(true);
     try {
-      const response = await fetch(`/api/catalog/${mode}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ condition: name, terms, ...(mode === "research" && { medicine: ingredient, limit: 10 }) }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(75_000)]),
-      });
-      const data = await response.json();
+      const { approvals, search } = await searchCatalog<ApprovalResults>(
+        "approvals", { condition: name, expand_terms: true }, controller,
+      );
       if (controller.signal.aborted) return;
-      if (!response.ok) {
-        setError(response.status === 503 && mode === "approvals" ? "Approval data is currently unavailable." :
-          typeof data.detail === "string" ? data.detail : "Couldn’t search. Check the fields and try again.");
-        return;
-      }
-      setResults(mode === "approvals" ? { mode, approvals: data.approvals } : { mode, papers: data.papers });
+      const query = { condition: search.condition, terms: search.terms };
+      setResults({ query, approvals });
+      const first = approvals.findIndex(approval => approval.research_medicine);
+      const medicine = approvals[first]?.research_medicine;
+      if (medicine) void loadResearch(query, first, medicine);
     } catch {
-      if (!controller.signal.aborted) setError("Search temporarily unavailable. Try again.");
+      if (!controller.signal.aborted) setError("Couldn’t load medicine approvals. Try again.");
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
   }
 
-  const count = results && (results.mode === "approvals" ? results.approvals.length : results.papers.length);
+  const count = results?.approvals.length ?? 0;
   return (
     <main className={styles.page}>
       <h1>Medicines &amp; research</h1>
-      <p className="intro">Find US and EU medicine approvals and published research for a condition.</p>
-      <div className="search-modes" role="group" aria-label="Evidence source">
-        <button type="button" aria-pressed={mode === "approvals"} onClick={() => changeMode("approvals")}>Approved medicines</button>
-        <button type="button" aria-pressed={mode === "research"} onClick={() => changeMode("research")}>Published research</button>
-      </div>
+      <p className="intro">Search a condition to see US and EU medicine approvals and related studies.</p>
       <form onSubmit={search} className={styles.form} autoComplete="off">
         <label>Condition
           <input required minLength={2} maxLength={100} placeholder="e.g. Psoriasis"
             value={condition} onChange={event => setCondition(event.target.value)} />
         </label>
-        {mode === "research" && <label>Active ingredient
-          <input ref={medicineInput} required minLength={2} maxLength={100} placeholder="e.g. Deucravacitinib"
-            value={medicine} onChange={event => setMedicine(event.target.value)} />
-        </label>}
-        <label>Other names for the condition (optional)
-          <input aria-describedby="other-names" value={alternateTerms} maxLength={306}
-            onChange={event => setAlternateTerms(event.target.value)} />
-          <span className="freshness" id="other-names">Separate up to three names with semicolons.</span>
-        </label>
-        <button disabled={busy} type="submit">{mode === "approvals" ? "Find approvals" : "Find studies"}</button>
+        <button disabled={busy} type="submit">Find medicines and research</button>
       </form>
       {error && <p className="error" role="alert">{error}</p>}
       <p className="result-status" role="status">
-        {busy ? "Searching…" : count === null ? "" : count ? `${count} ${mode === "approvals" ? "approvals" : "papers"} found.` : "No matches found."}
+        {busy ? "Searching for approvals…" : results && (
+          count ? `${count} ${count === 1 ? "approval" : "approvals"} found for ${results.query.condition}.` : "No matching approvals found."
+        )}
       </p>
-      {Boolean(count) && <ul className={`trial-list ${styles.results}`}>
-        {results?.mode === "approvals" && results.approvals.map((approval, index) => (
-          <ApprovalResult key={`${approval.region}-${approval.approval_id}-${index}`} approval={approval} onResearch={ingredient => {
-            setMedicine(ingredient);
-            changeMode("research");
-            requestAnimationFrame(() => medicineInput.current?.focus());
-          }} />
-        ))}
-        {results?.mode === "research" && results.papers.map(paper => <PaperResult key={paper.pmid} paper={paper} />)}
+      {results && count > 0 && <ul className={`trial-list ${styles.results}`}>
+        {results.approvals.map((approval, index) => {
+          const medicine = approval.research_medicine;
+          const selected = research?.index === index;
+          return <ApprovalResult key={`${approval.region}-${approval.approval_id}-${index}`} approval={approval}>
+            {medicine && <>
+              <button className="secondary" type="button" aria-expanded={selected} aria-controls={`research-${index}`}
+                onClick={() => {
+                  if (selected) {
+                    researchRequest.current?.abort();
+                    setResearch(null);
+                  } else void loadResearch(results.query, index, medicine);
+                }}>
+                {selected ? "Hide" : "Show"} research on {approval.medicine_name ?? medicine}
+              </button>
+              <section id={`research-${index}`} className={styles.research} hidden={!selected}>
+                {selected && <>
+                  <h4>Published research on {medicine}</h4>
+                  {research.error ? <>
+                    <p className="error" role="alert">{research.error}</p>
+                    <button className="secondary" type="button" onClick={() => void loadResearch(results.query, index, medicine)}>
+                      Retry research
+                    </button>
+                  </> : <p role="status">{!research.papers ? "Searching Europe PMC…" :
+                    research.papers.length === 0 ? "No matching studies found." : `${research.papers.length} from Europe PMC.`}</p>}
+                  {Boolean(research.papers?.length) && <ul className="trial-list">
+                    {research.papers?.map(paper => <PaperResult key={paper.pmid} paper={paper} />)}
+                  </ul>}
+                </>}
+              </section>
+            </>}
+          </ApprovalResult>;
+        })}
       </ul>}
-      <footer>{mode === "approvals" ? "Approvals are specific to the condition and jurisdiction." : "Results include systematic reviews, meta-analyses, and randomised controlled trials from Europe PMC."}</footer>
+      <footer>Research includes systematic reviews, meta-analyses, and randomised controlled trials.</footer>
     </main>
   );
 }

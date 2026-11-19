@@ -1,8 +1,11 @@
+import type { ReactNode } from "react";
+
 export type Approval = {
   region: "US" | "EU";
   approval_id: string;
   medicine_name: string | null;
   active_substance: string | null;
+  research_medicine: string | null;
   holder: string | null;
   status: string;
   approved_on: string | null;
@@ -26,7 +29,7 @@ function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleDateString("en", { dateStyle: "medium", timeZone: "UTC" }) : null;
 }
 
-export function ApprovalResult({ approval, onResearch }: { approval: Approval; onResearch: (ingredient: string) => void }) {
+export function ApprovalResult({ approval, children }: { approval: Approval; children: ReactNode }) {
   const agency = approval.region === "US" ? "US · FDA" : "EU · EMA";
   const ingredient = approval.active_substance;
   return <li>
@@ -43,16 +46,14 @@ export function ApprovalResult({ approval, onResearch }: { approval: Approval; o
     {approval.source_url?.startsWith("https://") && <p><a href={approval.source_url}>
       View approval {approval.approval_id}
     </a></p>}
-    {ingredient && <button type="button" className="secondary" onClick={() => onResearch(ingredient.slice(0, 100))}>
-      Find research on {approval.medicine_name ?? ingredient}
-    </button>}
+    {children}
   </li>;
 }
 
 export function PaperResult({ paper }: { paper: Paper }) {
   return <li>
     <span className="badge">{paper.paper_type}</span>
-    <h3><a href={paper.source_url}>{paper.title}</a></h3>
+    <h5><a href={paper.source_url}>{paper.title}</a></h5>
     <p>{[paper.journal, formatDate(paper.published_on), `PMID ${paper.pmid}`].filter(Boolean).join(" · ")}</p>
     {paper.abstract && <details className="trial-places">
       <summary>Read abstract</summary><p>{paper.abstract}</p>

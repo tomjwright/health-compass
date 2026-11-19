@@ -17,7 +17,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from health_compass import approvals, registry_trials, research, trials
-from health_compass.agent import Answer, answer_question
+from health_compass.agent import Answer, answer_question, expand_approval_search
 from health_compass.telemetry import setup_logging, setup_tracing
 
 setup_logging()
@@ -78,13 +78,21 @@ def search_recruiting_trials(
     return results
 
 
+class ApprovalRequest(approvals.ApprovalSearch):
+    expand_terms: bool = False
+
+
 @app.post("/approvals")
-def find_approvals(search: approvals.ApprovalSearch) -> approvals.ApprovalResults:
+def find_approvals(request: ApprovalRequest) -> approvals.ApprovalResults:
     """US and EU medicines approved now for a condition, newest approval first."""
+    search = expand_approval_search(request) if request.expand_terms else request
     try:
-        return approvals.find_approvals(search)
+        results = approvals.find_approvals(search)
     except approvals.ApprovalTablesNotBuiltError:
         raise HTTPException(503, APPROVALS_NOT_BUILT) from None
+    if request.expand_terms:
+        results.search = search
+    return results
 
 
 @app.post("/research")

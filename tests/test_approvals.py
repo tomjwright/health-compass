@@ -4,9 +4,11 @@ from typing import Any
 import dlt
 import pytest
 from fastapi.testclient import TestClient
+from test_agent import FakeModel
 from test_transform import FULL_STUDY, save_load
 
-from health_compass import transform
+from health_compass import agent, approvals, transform
+from health_compass.agent import Intake
 from health_compass.api import app
 from health_compass.ingest import common
 
@@ -49,7 +51,7 @@ def eu_approval(number: str, name: str, status: str, authorised: str, areas: str
     return {
         "ema_product_number": number,
         "name_of_medicine": name,
-        "active_substance": "Something",
+        "active_substance": "Metformin Hydrochloride AND Sitagliptin Phosphate",
         "medicine_status": status,
         "marketing_authorisation_date": authorised,
         "conditional_approval": "No",
@@ -75,7 +77,9 @@ def build_approvals(us: list[dict[str, Any]], eu: list[dict[str, Any]]) -> None:
     transform.build()
 
 
-def test_finds_approvals_in_force_for_a_condition_newest_first() -> None:
+def test_finds_approvals_in_force_for_a_condition_newest_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     us = [
         us_approval("NDA000001", "OLDBRAND", "19990101", "For type 2 diabetes mellitus in adults."),
         us_approval(
@@ -100,6 +104,7 @@ def test_finds_approvals_in_force_for_a_condition_newest_first() -> None:
     response = TestClient(app).post("/approvals", json=search)
 
     assert response.status_code == 200
+    assert response.json()["approvals"][1]["research_medicine"] == "metformin"
     found = [
         (a["region"], a["approval_id"], a["medicine_name"], a["status"], a["approved_on"])
         for a in response.json()["approvals"]
@@ -109,6 +114,42 @@ def test_finds_approvals_in_force_for_a_condition_newest_first() -> None:
         ("EU", "EMEA/H/C/1", "Eudrug", "Authorised", "2017-01-09"),
         ("US", "NDA000001", "OLDBRAND", "Marketed", "1999-01-01"),
     ]
+
+    model = FakeModel(
+        Intake(
+            kind="approval_search",
+            condition="Diabetes Mellitus, Type 2",
+            terms=["type 2 diabetes", "T2D"],
+        )
+    )
+    monkeypatch.setattr(agent, "chat_model", lambda **options: model)
+    response = TestClient(app).post("/approvals", json={"condition": "T2D", "expand_terms": True})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["search"]["condition"] == "Diabetes Mellitus, Type 2"
+    assert body["search"]["terms"] == ["T2D", "type 2 diabetes"]
+    assert [approval["approval_id"] for approval in body["approvals"]] == [row[1] for row in found]
+
+
+def test_approvals_still_use_the_entered_condition_when_the_agent_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(**options: Any) -> None:
+        raise TimeoutError
+
+    def lookup(search: approvals.ApprovalSearch) -> approvals.ApprovalResults:
+        assert search.condition == "Psoriasis"
+        assert search.terms == []
+        return approvals.ApprovalResults(approvals=[])
+
+    monkeypatch.setattr(agent, "chat_model", unavailable)
+    monkeypatch.setattr(approvals, "find_approvals", lookup)
+    response = TestClient(app).post(
+        "/approvals", json={"condition": "Psoriasis", "expand_terms": True}
+    )
+    assert response.status_code == 200
+    assert response.json()["search"]["condition"] == "Psoriasis"
+    assert response.json()["search"]["terms"] == []
 
 
 def test_rejects_more_than_three_terms() -> None:
