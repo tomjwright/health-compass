@@ -193,7 +193,7 @@ class TrialAgent:
             trials = find_trials(search).trials
             span.set_attribute("agent.trials_found", len(trials))
         if trials:
-            return {"trials": trials}
+            return {"trials": list(trials)}
         message = f"I found no trials for {state['condition']} in the trial data."
         return {"answer": Answer(outcome="no_trials", message=message, trials=[])}
 

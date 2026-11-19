@@ -21,6 +21,13 @@ jobs:
       - run: uv run pytest
       - name: Audit dependencies for known vulnerabilities
         run: uv export --frozen --no-hashes --no-emit-project | uv run pip-audit --strict -r /dev/stdin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run lint && npm run build
+        working-directory: web
 
   # The code must run on any machine: these catch paths and file handling that only work on Linux.
   test-other-os:
