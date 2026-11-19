@@ -104,6 +104,7 @@ def clinicaltrials_source(
         if given_studies is not None:
             for study in given_studies:
                 yield keep_used_fields(study)
+            loaded_every_page()
             return
         params: dict[str, str | int] = {"filter.overallStatus": "RECRUITING"}
         if since:
@@ -116,9 +117,17 @@ def clinicaltrials_source(
             log.info("fetched page %d with %d studies", page, len(body["studies"]))
             for study in body["studies"]:
                 yield keep_used_fields(study)
-            if "nextPageToken" not in body or page == max_pages:
-                break
+            if "nextPageToken" not in body:
+                loaded_every_page()
+                return
+            if page == max_pages:
+                return
             params["pageToken"] = body["nextPageToken"]
+
+    def loaded_every_page() -> None:
+        """Saved with the load, so the next load carries on from this one. A --max-pages run
+        doesn't save it, so the next run loads every trial again."""
+        dlt.current.source_state()["data_timestamp"] = version["dataTimestamp"]
 
     # Typed here, because dlt only creates a column once a value arrives and `since` starts empty.
     @dlt.resource(write_disposition="append", columns={"since": {"data_type": "date"}})
@@ -129,8 +138,6 @@ def clinicaltrials_source(
             "mode": "incremental" if since else "full",
             "since": since,
         }
-        # Saved with the load, so the next load knows where this one got to.
-        dlt.current.source_state()["data_timestamp"] = version["dataTimestamp"]
 
     return studies, loads
 

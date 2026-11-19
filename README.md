@@ -192,6 +192,8 @@ uv run --env-file .env python -m health_compass.ingest.clinicaltrials --max-page
 - **Every later run (`mode` = `incremental`):** only the trials updated since the day before the
   last load (`since`), in any status, so we see trials that stop recruiting. That's about 1,000
   trials a day. The day of overlap means a late update is never missed; dbt drops the duplicates.
+- **Quick test:** a `--max-pages` run loads only those pages and doesn't save the version, so the
+  next run loads every recruiting trial again.
 - **Nothing new:** dlt saves the version of the data it loaded (`dataTimestamp` from the API's
   `/version`). A run that finds the same version again does nothing.
 - **Only what we use:** `keep_used_fields` keeps the modules the dbt models read (identification,

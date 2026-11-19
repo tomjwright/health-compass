@@ -137,6 +137,9 @@ def test_retries_a_page_that_fails(api: FakeApi) -> None:
     assert len(nct_ids()) == 3
 
 
-def test_max_pages_stops_early(api: FakeApi) -> None:
+def test_max_pages_stops_early_and_the_next_run_loads_every_trial(api: FakeApi) -> None:
     run_load(max_pages=1)
     assert nct_ids() == [("NCT1",), ("NCT2",)]
+    run_load()
+    assert api.requests[-1].params["filter.overallStatus"] == "RECRUITING"
+    assert len(nct_ids()) == 5
