@@ -68,6 +68,7 @@ a { color: #075e60; }
 }
 .explorer:has(.results) .results-heading { border-bottom: 1px solid #d7e3e4; }
 .results-heading .result-status { margin-bottom: 0; }
+.result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .results { grid-column: 1; grid-row: 2; padding: 20px; max-height: 540px; overflow: auto; overflow-wrap: anywhere; }
 .list-only { display: block; }
 .list-only .results { max-height: none; }

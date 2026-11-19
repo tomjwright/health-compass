@@ -117,17 +117,20 @@ npm --prefix web run dev
 ```
 
 Open http://localhost:3000 and enter a condition to search recruiting studies on
-ClinicalTrials.gov. With the location fields empty, **Search trials** uses your device
-location if you allow it. It searches worldwide if location is unavailable or you clear it.
+ClinicalTrials.gov. With the location fields empty, **Search trials** requests your current
+location for a nearby search. If location access fails, choose a city to search nearby.
 Choose a country to filter studies and city suggestions. A selected city or device location
 enables a distance cutoff from 1 to 1,000 km (100 km by default). Nearby results show every
 matching study with a recruiting site inside the cutoff, closest first. The map shows the
-cutoff and the nearest qualifying site for each study.
+cutoff and the nearest qualifying site for each study. Refreshing the page or editing
+the city or country clears the previous location. Editing the condition clears device
+location and keeps a city you selected.
 
+Use **Browse worldwide studies** after a nearby search to see matches beyond the cutoff.
 Worldwide and country results list recruiting locations and map one site per study where
-coordinates are available. **Show distance from me** sorts the loaded studies by the
-straight-line distance to each study's closest mapped site and adds a shared distance scale.
-The browser calculates these comparisons.
+coordinates are available. Use **Show distance from me** or **Show distance from** your
+selected city to compare studies on a shared straight-line distance scale. Broader results
+are sorted by distance across the loaded studies once a location is available.
 
 The page calls `POST /trials/search`. For nearby searches the API sends a rounded location to
 ClinicalTrials.gov and applies the exact straight-line cutoff locally. City lookup uses

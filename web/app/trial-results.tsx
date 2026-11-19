@@ -57,6 +57,7 @@ export function TrialResult({ trial, site, scaleKm, selected, onSelect }: {
   const otherPlaces = [...new Set(trial.recruiting_sites.map(placeLabel))]
     .filter((other) => other && other !== label).sort();
   const distance = site?.distance_km;
+  const distanceLabel = distance?.toLocaleString("en", { maximumFractionDigits: distance < 10 ? 1 : 0 });
   return (
     <li>
       <h3>{site ? <button type="button" className="trial-focus" aria-pressed={selected} onClick={onSelect}>
@@ -70,14 +71,14 @@ export function TrialResult({ trial, site, scaleKm, selected, onSelect }: {
           <ul>{otherPlaces.map((other) => <li key={other}>{other}</li>)}</ul>
         </details>
       )}
-      {scaleKm != null && (distance != null ? (
+      {scaleKm != null ? (distance != null ? (
         <p className="trial-distance">
           <span className="distance-track" aria-hidden="true">
             <span style={{ width: `${Math.min(100, 100 * distance / scaleKm)}%` }} />
           </span>
-          <strong>{distance.toLocaleString("en", { maximumFractionDigits: distance < 10 ? 1 : 0 })} km</strong>
+          <strong>{distanceLabel} km</strong>
         </p>
-      ) : <p>Distance unavailable</p>)}
+      ) : <p>Distance unavailable</p>) : distanceLabel != null && <p>{distanceLabel} km away</p>}
       <p><a href={`https://clinicaltrials.gov/study/${encodeURIComponent(trial.nct_id)}`}>
         {trial.nct_id} on ClinicalTrials.gov
       </a></p>
