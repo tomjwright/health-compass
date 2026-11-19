@@ -71,7 +71,7 @@ def test_searches_recruiting_studies_worldwide_without_a_location(
     assert last.json()["trials"][0]["nct_id"] == "NCT00000002"
 
 
-@pytest.mark.parametrize("radius", [100, 1000])
+@pytest.mark.parametrize("radius", [100, 1_000, 10_000])
 def test_nearby_returns_every_recruiting_match_in_distance_order(
     monkeypatch: pytest.MonkeyPatch,
     radius: int,
@@ -111,6 +111,7 @@ def test_nearby_returns_every_recruiting_match_in_distance_order(
                     study("NCT00000003", ("France", "RECRUITING", 1)),
                     study("NCT00000004", ("Germany", "RECRUITING", 0.05)),
                     study("NCT00000005", ("France", "RECRUITING", 12)),
+                    study("NCT00000006", ("France", "RECRUITING", 100)),
                 ],
                 "nextPageToken": "second-page",
             }
@@ -129,8 +130,10 @@ def test_nearby_returns_every_recruiting_match_in_distance_order(
     assert response.status_code == 200
     body = response.json()
     expected = ["NCT00000002", "NCT00000001"]
-    if radius == 1000:
+    if radius >= 1_000:
         expected.append("NCT00000003")
+    if radius == 10_000:
+        expected.append("NCT00000005")
     assert (body["total_count"], body["radius_km"], body["next_page_token"]) == (
         len(expected),
         radius,
@@ -140,6 +143,19 @@ def test_nearby_returns_every_recruiting_match_in_distance_order(
     nearest = [trial["nearest_site"] for trial in body["trials"]]
     assert [site["longitude"] for site in nearest[:2]] == [0.2, 0.5]
     assert [site["distance_km"] for site in nearest[:2]] == pytest.approx([17.8, 51.15], abs=0.05)
+
+
+def test_nearby_rejects_a_radius_above_10_000_km() -> None:
+    response = TestClient(app).post(
+        "/trials/search",
+        json={
+            "condition": "hair loss",
+            "origin": {"latitude": 0, "longitude": 0},
+            "radius_km": 10_001,
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "radius_km"]
 
 
 @pytest.mark.parametrize("country", [None, "Turkey (Türkiye)"])

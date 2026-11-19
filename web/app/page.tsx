@@ -15,8 +15,8 @@ const countries = all()
   .map(({ alpha2 }) => ({ code: alpha2, name: regionNames.of(alpha2) ?? alpha2 }))
   .sort((left, right) => left.name.localeCompare(right.name, "en"));
 const defaultRadius = 100;
-const maxRadius = 1000;
-const radiusError = "Enter a distance from 1 to 1,000 km.";
+const maxRadius = 10_000;
+const radiusError = `Enter a distance from 1 to ${maxRadius.toLocaleString("en")} km.`;
 
 type City = Coordinates & { id: number; name: string; admin1?: string; country?: string };
 type CityLookup = { places: City[]; error?: string };
@@ -53,7 +53,6 @@ export default function FindTrials() {
   const [city, setCity] = useState("");
   const [location, setLocation] = useState<Location | null>(null);
   const [radius, setRadius] = useState(String(defaultRadius));
-  const [showDistanceScale, setShowDistanceScale] = useState(false);
   const [cityLookup, setCityLookup] = useState<CityLookup | null>(null);
   const [view, setView] = useState<{ query: TrialQuery; results: Results } | null>(null);
   const [selection, setSelection] = useState<TrialSelection | null>(null);
@@ -73,7 +72,7 @@ export default function FindTrials() {
   const radiusKm = results?.radius_km ?? null;
   const distanceOrigin = nearbyArea?.location ?? location;
   const referenceCity = cityAt(distanceOrigin);
-  const distanceScaleKm = showDistanceScale && distanceOrigin ? (radiusKm ?? 20_000) : null;
+  const distanceScaleKm = distanceOrigin ? (radiusKm ?? 20_000) : null;
   const retryQuery = error?.retry;
   const scope = nearbyArea
     ? `within ${nearbyArea.radiusKm.toLocaleString("en")} km of ${referenceCity ? cityLabel(referenceCity) : "your location"}`
@@ -145,18 +144,22 @@ export default function FindTrials() {
     };
   }, [city, countryCode, showCitySuggestions]);
 
-  function cancelPending() {
+  function cancelTrialSearch() {
     request.current?.abort();
     window.clearTimeout(radiusTimer.current);
-    locationAttempt.current += 1;
     setBusy("");
+  }
+
+  function cancelPending() {
+    cancelTrialSearch();
+    locationAttempt.current += 1;
   }
 
   function searchTrials(query: TrialQuery, { pageToken = null, debounce = false }: {
     pageToken?: string | null;
     debounce?: boolean;
   } = {}) {
-    cancelPending();
+    cancelTrialSearch();
     const controller = new AbortController();
     request.current = controller;
     setError(null);
@@ -199,40 +202,45 @@ export default function FindTrials() {
     else void fetchTrials();
   }
 
-  function locate(phrase: string, compare = false) {
-    cancelPending();
-    const attempt = locationAttempt.current;
-    const embedded = window.self !== window.top;
-    const blocked: SearchError = {
+  function locate(phrase: string, searchMode: SearchMode = "nearby") {
+    const nearby = searchMode === "nearby";
+    if (nearby) {
+      cancelPending();
+      setError(null);
+      setBusy("Getting your location…");
+    }
+    const attempt = ++locationAttempt.current;
+    const blocked = window.self !== window.top ? {
       message: "Location access was blocked here. Open Find Trials in its own tab to try again, or choose a city.",
       standaloneUrl: window.location.href,
-    };
-    setError(null);
+    } : null;
     if (!navigator.geolocation) {
-      setError(embedded ? blocked : { message: "Current location is unavailable in this browser. Choose a city." });
+      if (nearby) {
+        setBusy("");
+        setError(blocked ?? { message: "Current location is unavailable in this browser. Choose a city." });
+      }
       return;
     }
-    setBusy("Getting your location…");
     navigator.geolocation.getCurrentPosition(
       ({ coords: { latitude, longitude } }) => {
         if (attempt !== locationAttempt.current) return;
         const origin = { latitude, longitude };
         setLocation(origin);
+        if (!nearby) return;
         setCity("");
         setCityLookup(null);
-        if (compare) setShowDistanceScale(true);
         const radiusKm = latestRadius.current;
-        if (!compare && phrase.length >= 2 && radiusKm != null) {
+        if (phrase.length >= 2 && radiusKm != null) {
           searchTrials({ condition: phrase, area: { location: origin, radiusKm } });
         } else {
           setBusy("");
         }
       },
       (failure) => {
-        if (attempt !== locationAttempt.current) return;
+        if (!nearby || attempt !== locationAttempt.current) return;
         setBusy("");
         if (failure.code === failure.PERMISSION_DENIED) {
-          setError(embedded ? blocked : { message: "Allow location for this site in your browser settings, or choose a city." });
+          setError(blocked ?? { message: "Allow location for this site in your browser settings, or choose a city." });
         } else if (failure.code === failure.TIMEOUT) {
           setError({ message: "The location request timed out. Try again or choose a city." });
         } else {
@@ -241,6 +249,11 @@ export default function FindTrials() {
       },
       { timeout: 10000 },
     );
+  }
+
+  function searchWorldwide(phrase: string) {
+    searchTrials({ condition: phrase, area: null });
+    if (!location) locate(phrase, "all");
   }
 
   function submitNearby(phrase: string) {
@@ -267,7 +280,7 @@ export default function FindTrials() {
     }
     setSubmittedCondition(searchCondition);
     if (mode === "nearby") submitNearby(searchCondition);
-    else searchTrials({ condition: searchCondition, area: null });
+    else searchWorldwide(searchCondition);
   }
 
   function changeMode(next: SearchMode) {
@@ -277,7 +290,7 @@ export default function FindTrials() {
     setError(null);
     if (searchCondition.length < 2) return;
     setSubmittedCondition(searchCondition);
-    if (next === "all") searchTrials({ condition: searchCondition, area: null });
+    if (next === "all") searchWorldwide(searchCondition);
     else submitNearby(searchCondition);
   }
 
@@ -289,6 +302,7 @@ export default function FindTrials() {
   }
 
   function chooseCity(place: City) {
+    cancelPending();
     setLocation(place);
     setCity(place.name);
     setCityLookup(null);
@@ -329,7 +343,6 @@ export default function FindTrials() {
                 setCondition(event.target.value);
                 setSubmittedCondition("");
                 if (!selectedCity) setLocation(null);
-                setShowDistanceScale(false);
                 setView(null);
                 setSelection(null);
                 setError(null);
@@ -412,12 +425,6 @@ export default function FindTrials() {
             </div>
           </div>
           <div className="results">
-            {sites.length > 0 && <button type="button" className="secondary" disabled={Boolean(busy)} onClick={() => {
-              if (distanceOrigin) setShowDistanceScale(!showDistanceScale);
-              else locate("", true);
-            }}>
-              {showDistanceScale ? "Hide distance scale" : `Show distance from ${referenceCity?.name ?? "me"}`}
-            </button>}
             {distanceScaleKm != null && sites.length > 0 && (
               <div className="distance-scale">
                 <p>{radiusKm == null ? "Loaded studies, nearest first · straight-line distance" : "Closest recruiting sites first · straight-line distance"}</p>

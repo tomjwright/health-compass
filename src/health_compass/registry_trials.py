@@ -10,6 +10,7 @@ from pydantic import AliasPath, BaseModel, Field, model_validator
 from health_compass.ingest.clinicaltrials import API
 
 DEFAULT_RADIUS_KM = 100
+MAX_RADIUS_KM = 10_000
 
 
 class Coordinates(BaseModel):
@@ -21,7 +22,7 @@ class RegistrySearch(BaseModel):
     condition: str = Field(min_length=2, max_length=100)
     country: str | None = Field(default=None, max_length=80, pattern=r"^[\w .,'\u{2019}()&-]+$")
     origin: Coordinates | None = None
-    radius_km: int = Field(default=DEFAULT_RADIUS_KM, ge=1, le=1000)
+    radius_km: int = Field(default=DEFAULT_RADIUS_KM, ge=1, le=MAX_RADIUS_KM)
     page_token: str | None = Field(default=None, min_length=1, max_length=512)
 
     @model_validator(mode="after")

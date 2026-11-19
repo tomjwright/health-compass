@@ -78,7 +78,7 @@ export function TrialResult({ trial, site, scaleKm, selected, onSelect }: {
           </span>
           <strong>{distanceLabel} km</strong>
         </p>
-      ) : <p>Distance unavailable</p>) : distanceLabel != null && <p>{distanceLabel} km away</p>}
+      ) : <p>Distance unavailable</p>) : null}
       <p><a href={`https://clinicaltrials.gov/study/${encodeURIComponent(trial.nct_id)}`}>
         {trial.nct_id} on ClinicalTrials.gov
       </a></p>

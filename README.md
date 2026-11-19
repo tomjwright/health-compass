@@ -121,13 +121,13 @@ ClinicalTrials.gov. **Nearby** is the default. On your first search, Find Trials
 your device location unless you picked a city. If location access fails, choose a city in
 **Search area** beside the map. The country field narrows city suggestions. Nearby results
 show every matching study with a recruiting site within the radius, closest first.
-The radius runs from 1 to 1,000 km, with a default of 100 km. Selecting a city or changing
+The radius runs from 1 to 10,000 km, with a default of 100 km. Selecting a city or changing
 the radius refreshes the results and the map in place once a search has started.
 
 Select **All trials** to search the same condition worldwide. Use **Load more studies**
-to see additional matches. **Show distance from me** or **Show distance from** the selected
-city compares the loaded studies on a shared straight-line scale. Switch back to **Nearby**
-to search within the radius again.
+to see additional matches. Both modes show straight-line distances automatically when a
+device location or selected city is available. The worldwide list sorts loaded studies by
+distance from that location. Switch back to **Nearby** to search within the radius again.
 
 The page calls `POST /trials/search`. For nearby searches the API sends a rounded location to
 ClinicalTrials.gov and applies the exact straight-line cutoff locally. City lookup uses
