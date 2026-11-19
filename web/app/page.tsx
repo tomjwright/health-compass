@@ -32,7 +32,7 @@ type SearchError = {
   message: string;
   standaloneUrl?: string;
   placement?: "comparison" | "pagination";
-  locationUnavailable?: boolean;
+  canBrowse?: boolean;
 };
 type Results = {
   trials: Trial[];
@@ -91,7 +91,7 @@ export default function FindTrials() {
     return site ? [site] : [];
   }), [trials, sitesByTrial]);
   const showMap = sites.length > 0 || (location != null && radiusKm != null);
-  const showBrowseAction = searchCondition.length >= 2 && (radiusKm != null || error?.locationUnavailable);
+  const showBrowseAction = searchCondition.length >= 2 && (radiusKm != null || error?.canBrowse);
   let cityMessage = "Looking up cities…";
   if (cityLookup) {
     cityMessage = cityLookup.error ?? (cityLookup.places.length ? "Choose a city." : "No matching cities.");
@@ -165,7 +165,7 @@ export default function FindTrials() {
       setError({
         ...locationError,
         placement: action === "compare" ? "comparison" : undefined,
-        locationUnavailable: action === "nearby",
+        canBrowse: action === "nearby",
       });
     }
     const embedded = window.self !== window.top;
@@ -237,8 +237,11 @@ export default function FindTrials() {
     void searchTrials(location);
   }
 
-  async function searchTrials(origin: Coordinates | null, pageToken: string | null = null) {
-    if (!pageToken) setResults(null);
+  async function searchTrials(origin: Coordinates | null, {
+    pageToken = null,
+    browse = false,
+  }: { pageToken?: string | null; browse?: boolean } = {}) {
+    if (!pageToken && !browse) setResults(null);
     setSelection(null);
     setError(null);
     setBusy("Searching for trials…");
@@ -262,7 +265,11 @@ export default function FindTrials() {
         total_count: previous.total_count,
       } : page);
     } catch {
-      setError({ message: "Couldn’t search for trials. Try again in a moment.", placement: pageToken ? "pagination" : undefined });
+      setError({
+        message: "Couldn’t search for trials. Try again in a moment.",
+        placement: pageToken ? "pagination" : undefined,
+        canBrowse: browse,
+      });
     } finally {
       setBusy("");
     }
@@ -364,7 +371,7 @@ export default function FindTrials() {
                 </button>
               )}
               {showBrowseAction && (
-                <button type="button" className="secondary" disabled={Boolean(busy)} onClick={() => void searchTrials(null)}>
+                <button type="button" className="secondary" disabled={Boolean(busy)} onClick={() => void searchTrials(null, { browse: true })}>
                   {countryName ? `Browse studies in ${countryName}` : "Browse worldwide studies"}
                 </button>
               )}
@@ -398,7 +405,7 @@ export default function FindTrials() {
               </ul>
               {error?.placement === "pagination" && <p className="error" role="alert">{error.message}</p>}
               {results.next_page_token && <button type="button" className="secondary" disabled={Boolean(busy)}
-                onClick={() => void searchTrials(null, results.next_page_token)}>Load more studies</button>}
+                onClick={() => void searchTrials(null, { pageToken: results.next_page_token })}>Load more studies</button>}
             </div>
           )}
         </section>
