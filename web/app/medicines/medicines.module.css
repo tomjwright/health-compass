@@ -1,0 +1,14 @@
+.page { max-width: 980px; padding-bottom: 24px; }
+.form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  align-items: start;
+  gap: 14px;
+  margin-block: 14px 22px;
+  padding: 20px;
+}
+.form button { min-width: max-content; justify-self: start; margin-top: 24px; }
+.results { background: white; border: 1px solid #d7e3e4; border-radius: 16px; padding: 0 20px; }
+.results li:first-child { border-top: none; }
+.results li button { margin-top: 6px; min-height: 36px; }
+.results details p { white-space: pre-line; overflow-wrap: anywhere; }

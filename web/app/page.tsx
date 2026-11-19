@@ -331,7 +331,6 @@ export default function FindTrials() {
 
   return (
     <>
-      <header><span className="brand-mark" aria-hidden="true">✦</span> Health Compass</header>
       <main>
         <h1>Find clinical trials</h1>
         <p className="intro">Explore recruiting studies near you or search worldwide.</p>
