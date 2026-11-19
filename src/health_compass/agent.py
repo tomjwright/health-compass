@@ -1,19 +1,23 @@
-"""The agent: one graph that answers questions from the tables, such as "are there trials for X
-near me?".
+"""The agent: one graph that answers "are there trials for X near me?" and "what's approved for
+X?" from the tables.
 
-    route ──► find_trials ──► write_answer ──► check_output ──► answered
-      │            │               ▲                 │
-      ▼            ▼               └── fails once ───┤
-   refused     no_trials                fails twice ─┴──► trials_only
+          ┌─► find_trials ────┐
+    route ┤                   ├─► write_answer ──► check_output ──► answered
+      │   └─► find_approvals ─┘         ▲                │
+      │          │                      └── fails once ──┤
+      ▼          ▼                           fails twice ─┴──► trials_only / approvals_only
+   refused   no_trials / no_approvals
 
-`Supervisor.route` sorts the question and hands it to the agent for its kind, such as
-`TrialAgent`. Each agent is its own subgraph. A `RecordAgent` finds records, then writes and
+`Supervisor.route` sorts the question and hands it to the agent for its kind, `TrialAgent` or
+`ApprovalAgent`. Each agent is its own subgraph. A `RecordAgent` finds records, then writes and
 checks one note per record with the shared `write_answer` and `check_output` steps; a subclass
 sets only its search, prompts and how a record is shown.
 
 The LLM only sorts the question and writes one note per record. Python decides what is refused
 and what is shown, and every fact shown (status, site, distance) comes from the tables.
 The question goes to the LLM; the location never does, and neither is logged or traced.
+Approvals are from the US and the EU only, so every answer that lists them ends with
+LOCAL_APPROVAL.
 
 `answer_question` runs the agent as a durable DBOS workflow. Each node is a DBOS step, so after
 a crash a run resumes from its last finished step, without calling the LLM again for the others.
@@ -34,6 +38,13 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, Field
 
+from health_compass.approvals import (
+    Approval,
+    ApprovalSearch,
+    ApprovalTablesNotBuiltError,
+    find_approvals,
+    indications_shown,
+)
 from health_compass.judge import unsupported_notes
 from health_compass.trials import TablesNotBuiltError, Trial, TrialSearch, find_trials
 
@@ -42,30 +53,44 @@ tracer = trace.get_tracer(__name__)
 
 DEFAULT_MODEL = "google_genai:gemini-3.1-flash-lite"
 MAX_TRIALS = 5
+MAX_APPROVALS = 5
 MAX_ANSWER_ATTEMPTS = 2
 
 REFUSALS = {
     "personal_medical_advice": (
-        "I can't advise on doses or on whether you should take a medicine: please ask your "
-        "doctor or pharmacist. I can find clinical trials for a condition near you."
+        "I can't advise on doses or on which medicine you should take: please ask your "
+        "doctor or pharmacist. I can find clinical trials for a condition near you, or list "
+        "the medicines approved for it in the US and the EU."
     ),
     "other": (
-        "I can only find clinical trials for a medical condition near you, for example "
-        '"Are there alopecia trials near me?"'
+        "I can only find clinical trials for a medical condition near you, or list the "
+        'medicines approved for one in the US and the EU, for example "Are there alopecia '
+        'trials near me?" or "What\'s approved for psoriasis?"'
     ),
 }
 TRIALS_ONLY = (
     "Here are the trials I found. I couldn't write a summary that passed my checks, "
     "so only the trial details are shown."
 )
+APPROVALS_ONLY = (
+    "Here are the approvals I found. I couldn't write a summary that passed my checks, "
+    "so only the approval details are shown."
+)
+LOCAL_APPROVAL = (
+    "These approvals are from the US FDA and the European Medicines Agency. Approval differs by "
+    "country: check with your doctor, pharmacist or local medicines regulator whether a "
+    "medicine is approved where you live."
+)
 
-INTAKE_PROMPT = """Sort the user's question for a clinical trial finder.
+INTAKE_PROMPT = """Sort the user's question for a finder of clinical trials and approved medicines.
 - trial_search: they want clinical trials for a medical condition.
-- personal_medical_advice: they ask about doses, or whether they should take, start or stop
-  a treatment.
-- other: anything else.
-For trial_search, give the condition as its official MeSH heading, e.g. "Alopecia" for
-"hair loss" or "Hypertension" for "high blood pressure"."""
+- approval_search: they ask which medicines are approved for a medical condition.
+- personal_medical_advice: they ask about doses, which medicine they should take, start or
+  stop, or which medicine is best for them.
+- other: anything else, including what a named medicine is approved for.
+For a search, give the condition as its official MeSH heading, e.g. "Alopecia" for
+"hair loss" or "Hypertension" for "high blood pressure". For approval_search, also give up to 3
+other words for it that a US drug label might use, e.g. "high blood pressure"."""
 
 ANSWER_PROMPT = """You describe clinical trials to a member of the public.
 Use only the trials given. Never give doses or advice on what to take.
@@ -78,8 +103,21 @@ supported if everything it claims is stated in, or follows directly from, the re
 paraphrase is fine. A note that adds a result, a benefit, or a detail that isn't in the record
 is unsupported."""
 
+APPROVAL_ANSWER_PROMPT = """You describe medicines approved in the US or the EU to a member of
+the public. Use only the approvals given. Never give doses or advice on what to take, and never
+say which medicine is best or compare how well they work. Write a one or two sentence summary
+that suggests discussing treatment with their doctor, and one plain-English sentence per
+approval on what it is approved for, citing it by its number."""
+
+APPROVAL_JUDGE_PROMPT = """You check notes written about approved medicines for the public.
+Each medicine comes with what its FDA label or EMA record says it is approved for, and a note
+about it. A note is supported if everything it claims is stated in, or follows directly from,
+the record. Plain paraphrase is fine. A note that adds a use, a benefit, a comparison or a
+detail that isn't in the record is unsupported."""
+
 DOSE = re.compile(r"\b\d+(\.\d+)?\s?(mg|mcg|µg|ml|iu|units?)\b", re.IGNORECASE)
 ADVICE = re.compile(r"\byou should (take|start|stop|use)\b|\b(take|increase|reduce) your\b", re.I)
+RANKING = re.compile(r"\b(best|most effective|strongest)\b", re.IGNORECASE)
 
 
 def chat_model() -> BaseChatModel:
@@ -103,8 +141,9 @@ class AgentError(Exception):
 
 
 class Intake(BaseModel):
-    kind: Literal["trial_search", "personal_medical_advice", "other"]
+    kind: Literal["trial_search", "approval_search", "personal_medical_advice", "other"]
     condition: str | None = Field(description="The condition's MeSH heading, or null.")
+    terms: list[str] = Field(default=[], description="Up to 3 other words for the condition.")
 
 
 class Note(BaseModel):
@@ -121,10 +160,17 @@ class AnsweredTrial(Trial):
     note: str | None
 
 
+class AnsweredApproval(Approval):
+    note: str | None
+
+
 class Answer(BaseModel):
-    outcome: Literal["answered", "refused", "no_trials", "trials_only"]
+    outcome: Literal[
+        "answered", "refused", "no_trials", "trials_only", "no_approvals", "approvals_only"
+    ]
     message: str
     trials: list[AnsweredTrial] = []
+    approvals: list[AnsweredApproval] = []
 
 
 class State(TypedDict, total=False):
@@ -133,6 +179,7 @@ class State(TypedDict, total=False):
     longitude: float
     agent: str
     condition: str
+    terms: list[str]
     records: list[Any]
     draft: Draft
     problems: list[str]
@@ -318,17 +365,65 @@ class TrialAgent(RecordAgent):
         return trial.nct_id
 
 
+class ApprovalAgent(RecordAgent):
+    """Medicines approved now in the US and the EU for a condition. It never uses the location,
+    so every answer that lists approvals says that approval differs by country."""
+
+    name = "approvals"
+    kind = "approval_search"
+    answer_prompt = APPROVAL_ANSWER_PROMPT
+    judge_prompt = APPROVAL_JUDGE_PROMPT
+    answered = AnsweredApproval
+    results_only = APPROVALS_ONLY
+    checks = ((RANKING, "it ranks the medicines"),)
+    closing = LOCAL_APPROVAL
+
+    @DBOS.step()
+    def find_approvals(self, state: State) -> State:
+        with tracer.start_as_current_span("agent.find_approvals") as span:
+            search = ApprovalSearch(
+                condition=state["condition"], terms=state["terms"], limit=MAX_APPROVALS
+            )
+            approvals = find_approvals(search).approvals
+            span.set_attribute("agent.approvals_found", len(approvals))
+        if approvals:
+            return {"records": approvals}
+        message = (
+            f"I found no medicines approved now for {state['condition']} by the US FDA or the "
+            "European Medicines Agency. Approval differs by country: check with your doctor, "
+            "pharmacist or local medicines regulator."
+        )
+        return {"answer": Answer(outcome="no_approvals", message=message)}
+
+    find = find_approvals
+
+    def shown_to_writer(self, approval: Approval) -> str:
+        return (
+            f"{approval.approval_id}: {approval.medicine_name} ({approval.active_substance})\n"
+            f"{indications_shown(approval)}"
+        )
+
+    def shown_to_judge(self, approval: Approval) -> str:
+        return (
+            f"Medicine: {approval.medicine_name} ({approval.active_substance})\n"
+            f"Approved for: {indications_shown(approval)}"
+        )
+
+    def id_of(self, approval: Approval) -> str:
+        return approval.approval_id
+
+
 class Supervisor:
     """Sorts the question, then hands it to the agent for its kind, or refuses it:
 
-    route ──► trials (TrialAgent's graph) ──► END
-      │
+    route ──► trials    (TrialAgent's graph) ────┐
+      ├─────► approvals (ApprovalAgent's graph) ─┴──► END
       └─────► refused
     """
 
     def __init__(self, model: BaseChatModel, judge: BaseChatModel) -> None:
         self.model = model
-        agents: list[RecordAgent] = [TrialAgent(model, judge)]
+        agents: list[RecordAgent] = [TrialAgent(model, judge), ApprovalAgent(model, judge)]
         self.agents = {agent.name: agent for agent in agents}
         graph = StateGraph(State)
         graph.add_node("route", self.route, retry_policy=LLM_RETRY)
@@ -347,7 +442,7 @@ class Supervisor:
                 state = self.graph.invoke(
                     {"question": question, "latitude": latitude, "longitude": longitude}
                 )
-            except TablesNotBuiltError:
+            except (TablesNotBuiltError, ApprovalTablesNotBuiltError):
                 raise
             except Exception as error:
                 # LLM errors can quote the model's output, which can repeat the question, so
@@ -372,7 +467,12 @@ class Supervisor:
             span.set_attribute("agent.kind", intake.kind)
         for agent in self.agents.values():
             if intake.kind == agent.kind and intake.condition:
-                return {"agent": agent.name, "condition": intake.condition[:100]}
+                terms = [term.strip()[:100] for term in intake.terms if len(term.strip()) >= 2]
+                return {
+                    "agent": agent.name,
+                    "condition": intake.condition[:100],
+                    "terms": terms[:3],
+                }
         kind = "other" if intake.kind not in REFUSALS else intake.kind
         return {"answer": Answer(outcome="refused", message=REFUSALS[kind])}
 

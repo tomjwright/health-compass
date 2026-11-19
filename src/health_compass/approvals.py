@@ -16,6 +16,8 @@ from health_compass.transform import warehouse_path
 log = logging.getLogger(__name__)
 
 FIND_APPROVALS = (Path(__file__).parent / "find_approvals.sql").read_text()
+# Labels can run to 23,000 characters; what a medicine is approved for comes first.
+INDICATIONS_SHOWN = 2000
 
 Term = Annotated[str, Field(min_length=2, max_length=100)]
 
@@ -81,3 +83,8 @@ def find_approvals(search: ApprovalSearch) -> ApprovalResults:
     log.info("found %d approvals", len(rows))
     approvals = [Approval(**dict(zip(names, row, strict=True))) for row in rows]
     return ApprovalResults(approvals=approvals)
+
+
+def indications_shown(approval: Approval) -> str:
+    """The start of what the approval says the medicine is for: what the LLM and judge see."""
+    return (approval.indications or "none given")[:INDICATIONS_SHOWN]

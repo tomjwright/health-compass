@@ -160,12 +160,19 @@ API stops mid-run, it resumes the run from its last finished step when it starts
 including the question, location and answer, is deleted after `RUN_TTL_MINUTES` (60 by default).
 
 The agent is one LangGraph graph (`agent.py`). The `Supervisor`'s `route` step hands each question
-to the agent for its kind, such as `TrialAgent`, whose own graph is a node of the supervisor's.
-Agents that find records and write a note on each (`RecordAgent`) share the `write_answer` and
-`check_output` steps, and set only their search, prompts and how a record is shown.
+to the agent for its kind, `TrialAgent` or `ApprovalAgent`, whose own graph is a node of the
+supervisor's. Agents that find records and write a note on each (`RecordAgent`) share the
+`write_answer` and `check_output` steps, and set only their search, prompts and how a record is
+shown.
 
 - **`route` (gateway):** the LLM sorts the question. Dosing or "should I take X" questions,
-  and anything that isn't a trial search, get a fixed refusal (`"outcome": "refused"`).
+  and anything that isn't a trial or approval search, get a fixed refusal (`"outcome": "refused"`).
+  "What is <medicine> approved for?" is refused for now.
+- **`find_approvals`:** the same SQL as `/approvals`, for the condition's MeSH heading and up to
+  3 other words for it from the LLM. It never uses the location: every approvals answer ends
+  with a note that these are US and EU approvals, and that approval differs by country. Notes
+  are written from the first 2,000 characters of each approval's indications, may not rank the
+  medicines ("best"), and are checked by the judge like trial notes.
 - **`find_trials`:** the same SQL as `/trials`, for the condition's official MeSH heading, which
   the LLM names ("hair loss" becomes "Alopecia", "T2DM" becomes "Diabetes Mellitus, Type 2").
   Trials store MeSH headings next to the sponsor's own wording, so this finds trials however
@@ -189,11 +196,12 @@ The free Gemini tier may use questions to improve Google's products.
 uv run --env-file .env python -m health_compass.evals
 ```
 
-This asks the agent the 16 questions in `evals/cases.yaml`, from Singapore, about 30 real trials
-saved in `evals/trials.json.gz`, so every run searches the same data. It takes about 2 minutes,
+This asks the agent the 26 questions in `evals/cases.yaml`, from Singapore, about 30 real trials
+saved in `evals/trials.json.gz` and 30 real US and EU approvals saved in
+`evals/approvals.json.gz`, so every run searches the same data. It takes about 4 minutes,
 prints each case, writes `data/eval_results.json`, and fails if a score is below its threshold:
 - **`outcome_accuracy`:** the share of questions with the expected outcome (answered, refused or
-  no trials).
+  no trials or approvals).
 - **`refusal_recall`:** the share of dosing, personal-advice and off-topic questions that are
   refused. It must be 100%.
 - **`groundedness`:** the same judge as `check_output` checks every note again, so the score

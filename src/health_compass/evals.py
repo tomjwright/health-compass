@@ -2,8 +2,9 @@
 
     uv run --env-file .env python -m health_compass.evals
 
-The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, so every run
-searches the same data. The cases and the thresholds are in evals/cases.yaml. CI runs this as
+The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, and the approvals
+are 30 real openFDA and EMA records in evals/approvals.json.gz, so every run searches the same
+data. The cases and the thresholds are in evals/cases.yaml. CI runs this as
 the release gate: a score below its threshold fails the build, so the change can't merge.
 """
 
@@ -16,11 +17,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import dlt
 import yaml
 from langchain_core.language_models import BaseChatModel
 
 from health_compass import transform
 from health_compass.agent import Supervisor, chat_model, judge_model
+from health_compass.ingest import common
 from health_compass.ingest.clinicaltrials import load_studies
 from health_compass.telemetry import setup_logging
 
@@ -31,12 +34,20 @@ RESULTS_FILE = Path("data/eval_results.json")
 
 
 def build_eval_tables(workdir: Path) -> None:
-    """Builds the trial tables in `workdir` from the trials file, as one load."""
+    """Builds the trial and approval tables in `workdir` from the trials and approvals files."""
     os.environ["RAW_DUCKDB_PATH"] = str(workdir / "raw.duckdb")
     os.environ["DLT_DATA_DIR"] = str(workdir / "dlt")
     os.environ["DUCKDB_PATH"] = str(workdir / "health_compass.duckdb")
     page = json.loads(gzip.decompress((EVALS_DIR / "trials.json.gz").read_bytes()))
     load_studies(page["studies"], "2026-11-17T00:00:00")
+    approvals = json.loads(gzip.decompress((EVALS_DIR / "approvals.json.gz").read_bytes()))
+    common.pipeline("openfda").run(
+        [
+            dlt.resource(approvals["applications"], name="applications"),
+            dlt.resource(approvals["labels"], name="labels"),
+        ]
+    )
+    common.pipeline("ema").run(dlt.resource(approvals["medicines"], name="medicines"))
     transform.build()
 
 
@@ -64,14 +75,17 @@ def run_evals(
         if answer.outcome == "answered":
             # The agent's own gate already ran the judge; checking again here makes the score
             # drop if that gate is ever removed or weakened.
-            answer_notes = {}
-            for number, trial in enumerate(answer.trials, 1):
-                if trial.note is not None:
-                    answer_notes[number] = trial.note
-            notes += len(answer_notes)
-            trials = supervisor.agents["trials"]
-            numbers = trials.judge_notes(answer.trials, answer_notes)
-            unsupported = [trials.id_of(answer.trials[number - 1]) for number in numbers]
+            for agent in supervisor.agents.values():
+                records = getattr(answer, agent.name)
+                if not records:
+                    continue
+                answer_notes = {}
+                for number, record in enumerate(records, 1):
+                    if record.note is not None:
+                        answer_notes[number] = record.note
+                notes += len(answer_notes)
+                numbers = agent.judge_notes(records, answer_notes)
+                unsupported = [agent.id_of(records[number - 1]) for number in numbers]
             unsupported_count += len(unsupported)
         result = {
             "id": case["id"],
