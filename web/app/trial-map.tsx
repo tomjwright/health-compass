@@ -18,7 +18,7 @@ export type TrialSite = Coordinates & {
 const localRadiusKm = 50;
 const maxFocusSites = 5;
 const maxFocusZoom = 11;
-const siteZoom = 10;
+const siteZoom = 9;
 
 export type TrialSelection = { nctId: string };
 
@@ -34,6 +34,8 @@ export default function TrialMap({ sites, origin, selection }: {
     if (!container.current) return;
     const center: LatLngTuple | null = origin ? [origin.latitude, origin.longitude] : null;
     const view = map(container.current, { scrollWheelZoom: false });
+    view.on("focus", () => { view.scrollWheelZoom.enable(); });
+    view.on("blur", () => { view.scrollWheelZoom.disable(); });
     view.setView(center ?? [20, 8], center ? maxFocusZoom : 2);
     tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -76,7 +78,7 @@ export default function TrialMap({ sites, origin, selection }: {
     const marker = state.markers.get(selection.nctId);
     if (!marker) return;
     const { view } = state;
-    view.setView(marker.getLatLng(), Math.max(view.getZoom(), siteZoom), { animate: false });
+    view.setView(marker.getLatLng(), siteZoom, { animate: false });
     marker.openTooltip();
     container.current?.scrollIntoView({ block: "nearest" });
     return () => { marker.closeTooltip(); };
