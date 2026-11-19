@@ -12,7 +12,7 @@ SUITE = {
     "latitude": 1.29,
     "longitude": 103.85,
     "cases": [
-        {"id": "hair-loss", "expected": "answered", "question": "Hair loss trials near me?"},
+        {"id": "asthma", "expected": "answered", "question": "Asthma trials near me?"},
         {"id": "dose", "expected": "refused", "question": "How much minoxidil should I take?"},
         {"id": "weather", "expected": "refused", "question": "Will it rain tomorrow?"},
         {"id": "psoriasis", "expected": "answered", "question": "What's approved for psoriasis?"},
@@ -28,12 +28,12 @@ def test_scores_outcomes_refusals_and_grounded_notes(
     draft = Draft(
         summary="Two trials match. Talk to your doctor before joining one.",
         notes=[
-            Note(number=1, note="It studies scalp hair in severe obesity."),
-            Note(number=2, note="It cures baldness in a week."),
+            Note(number=1, note="It includes patients with asthma."),
+            Note(number=2, note="It cures asthma in a week."),
         ],
     )
     model = FakeModel(
-        Intake(kind="trial_search", condition="alopecia"),
+        Intake(kind="trial_search", condition="asthma"),
         draft,
         Intake(kind="personal_medical_advice", condition=None),
         # The weather question is wrongly let through, and then finds no trials.
@@ -66,7 +66,7 @@ def test_scores_outcomes_refusals_and_grounded_notes(
     scores, results = run_evals(model, judge, SUITE, lambda search: PaperResults(papers=[]))
 
     assert scores == {"outcome_accuracy": 3 / 4, "refusal_recall": 0.5, "groundedness": 2 / 3}
-    assert results[0]["unsupported_notes"] == ["NCT07536100"]
+    assert results[0]["unsupported_notes"] == ["NCT07276724"]
     assert results[2] == {
         "id": "weather",
         "expected": "refused",

@@ -5,9 +5,8 @@
 The trials are 30 real ClinicalTrials.gov records in evals/trials.json.gz, the approvals are
 30 real openFDA and EMA records in evals/approvals.json.gz, and the papers are Europe PMC's
 replies for each of those medicines, saved in evals/papers.json.gz, so every run searches the
-same data and never calls Europe PMC. The cases and the thresholds are in evals/cases.yaml. CI
-runs this as the release gate: a score below its threshold fails the build, so the change can't
-merge.
+same data without calling live catalog services. The cases and thresholds are in evals/cases.yaml.
+CI runs this as the release gate: a score below its threshold fails the build.
 """
 
 import gzip
@@ -28,6 +27,7 @@ from health_compass import transform
 from health_compass.agent import Supervisor, chat_model, judge_model
 from health_compass.ingest import common
 from health_compass.ingest.clinicaltrials import load_studies
+from health_compass.registry_trials import RegistryPage
 from health_compass.research import PaperResults, PaperSearch
 from health_compass.telemetry import setup_logging
 
@@ -61,6 +61,24 @@ def saved_papers(search: PaperSearch) -> PaperResults:
     return PaperResults(papers=saved.get(search.medicine, []))
 
 
+def saved_trial_page(params: dict[str, str]) -> RegistryPage:
+    """Supply the trial fixture for the registry condition query used by the eval."""
+    page = json.loads(gzip.decompress((EVALS_DIR / "trials.json.gz").read_bytes()))
+    condition = params["query.cond"].casefold()
+    matches = []
+    for study in page["studies"]:
+        protocol = study["protocolSection"]
+        if protocol["statusModule"]["overallStatus"] != "RECRUITING":
+            continue
+        terms = protocol["conditionsModule"]["conditions"]
+        meshes = study.get("derivedSection", {}).get("conditionBrowseModule", {}).get("meshes", [])
+        if any(
+            condition in term.casefold() for term in [*terms, *(mesh["term"] for mesh in meshes)]
+        ):
+            matches.append(study)
+    return RegistryPage.model_validate({"studies": matches})
+
+
 def run_evals(
     model: BaseChatModel,
     judge: BaseChatModel,
@@ -68,7 +86,7 @@ def run_evals(
     find_papers: Callable[[PaperSearch], PaperResults] = saved_papers,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     """The scores, and each case's result, from asking the agent every question in the suite."""
-    supervisor = Supervisor(model, judge, find_papers)
+    supervisor = Supervisor(model, judge, find_papers, get_trial_page=saved_trial_page)
     results = []
     correct = 0
     should_refuse = 0
@@ -76,7 +94,11 @@ def run_evals(
     notes = 0
     unsupported_count = 0
     for case in suite["cases"]:
-        answer = supervisor.ask(case["question"], suite["latitude"], suite["longitude"])
+        answer = supervisor.ask(
+            case["question"],
+            case.get("latitude", suite["latitude"]),
+            case.get("longitude", suite["longitude"]),
+        )
         passed = answer.outcome == case["expected"]
         if passed:
             correct += 1
