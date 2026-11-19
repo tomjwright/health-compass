@@ -63,6 +63,8 @@ def test_finds_trials_at_their_nearest_recruiting_site_with_stopped_trials_last(
     assert response.status_code == 200
     body = response.json()
     assert body["data_as_of"] == "2026-11-17T00:00:00"
+    closest_recruiting = body["trials"][0]
+    assert (closest_recruiting["latitude"], closest_recruiting["longitude"]) == (3.14, 101.69)
     found = [
         (
             t["nct_id"],

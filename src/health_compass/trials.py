@@ -48,9 +48,14 @@ class Trial(BaseModel):
     distance_km: float
 
 
+class LocatedTrial(Trial):
+    latitude: float
+    longitude: float
+
+
 class TrialResults(BaseModel):
     data_as_of: datetime
-    trials: list[Trial]
+    trials: list[LocatedTrial]
 
 
 def find_trials(search: TrialSearch) -> TrialResults:
@@ -67,5 +72,5 @@ def find_trials(search: TrialSearch) -> TrialResults:
         ).fetchall()
     # The search itself is health and location data, so only the count is logged.
     log.info("found %d trials", len(rows))
-    trials = [Trial(**dict(zip(names, row, strict=True))) for row in rows]
+    trials = [LocatedTrial(**dict(zip(names, row, strict=True))) for row in rows]
     return TrialResults(data_as_of=data_as_of, trials=trials)
