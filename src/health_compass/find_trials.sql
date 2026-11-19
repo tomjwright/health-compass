@@ -1,6 +1,4 @@
--- Trials for a condition, each shown at its nearest recruiting site, or its nearest site if
--- none of its sites is recruiting.
--- Recruiting trials come first, then trials that have stopped recruiting, each nearest first.
+-- Recruiting trials for a condition, each shown at its nearest recruiting site.
 with matching_trials as (
     select distinct trial_key
     from marts.bridge_trial_conditions
@@ -31,7 +29,9 @@ sites as (
     join marts.dim_trials as t using (trial_key)
     join marts.fct_trial_sites using (trial_key)
     join marts.dim_locations as l using (location_key)
-    where l.latitude is not null and l.longitude is not null
+    where t.is_recruiting
+        and fct_trial_sites.site_status = 'RECRUITING'
+        and l.latitude is not null and l.longitude is not null
 )
 
 select
@@ -40,7 +40,7 @@ select
     round(distance_km, 1) as distance_km
 from sites
 qualify row_number() over (
-    partition by nct_id order by coalesce(site_status = 'RECRUITING', false) desc, distance_km
+    partition by nct_id order by distance_km
 ) = 1
-order by is_recruiting desc, distance_km, nct_id
+order by distance_km, nct_id
 limit $limit

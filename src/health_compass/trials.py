@@ -31,10 +31,7 @@ class TrialSearch(BaseModel):
 
 
 class Trial(BaseModel):
-    """A trial at its nearest recruiting site, or its nearest site if none is recruiting.
-
-    `is_recruiting` is false once the trial has stopped; `site_status` is that site's own status.
-    """
+    """A study and its nearest recruiting site in the warehouse."""
 
     nct_id: str
     title: str | None
@@ -59,7 +56,7 @@ class TrialResults(BaseModel):
 
 
 def find_trials(search: TrialSearch) -> TrialResults:
-    """Trials for a condition, nearest first, recruiting ones before those that have stopped."""
+    """Recruiting trials for a condition, ranked by distance to a recruiting site."""
     database = warehouse_path()
     if not database.exists():
         raise TablesNotBuiltError

@@ -39,7 +39,7 @@ def test_health_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_finds_trials_at_their_nearest_recruiting_site_with_stopped_trials_last() -> None:
+def test_finds_only_recruiting_trials_at_their_nearest_recruiting_site() -> None:
     # Its Singapore site isn't recruiting yet, so the Kuala Lumpur site is shown.
     near = trial(
         "NCT00000011",
@@ -47,14 +47,17 @@ def test_finds_trials_at_their_nearest_recruiting_site_with_stopped_trials_last(
         site("Singapore", 1.29, 103.85, status="NOT_YET_RECRUITING"),
     )
     far = trial("NCT00000012", site("London", 51.51, -0.13))
-    # No site is recruiting, so its nearest site is shown, even with no status.
-    stopped = trial(
-        "NCT00000013",
+    # The study has stopped even though its site still reports recruiting.
+    stopped = trial("NCT00000013", site("Johor Bahru", 1.49, 103.74))
+    no_recruiting_site = trial(
+        "NCT00000015",
         site("Johor Bahru", 1.49, 103.74, status=None),
         site("Bangkok", 13.75, 100.5, status="COMPLETED"),
     )
-    no_longitude = trial("NCT00000014", {"city": "Somewhere", "geoPoint": {"lat": 1.3}})
-    save_load("2026-11-16", [near, far, stopped, no_longitude, BARE_STUDY])
+    no_longitude = trial(
+        "NCT00000014", {"city": "Somewhere", "status": "RECRUITING", "geoPoint": {"lat": 1.3}}
+    )
+    save_load("2026-11-16", [near, far, stopped, no_longitude, no_recruiting_site, BARE_STUDY])
     save_load("2026-11-17", [updated(stopped, "COMPLETED", "2026-11-17")])
     transform.build()
 
@@ -79,7 +82,6 @@ def test_finds_trials_at_their_nearest_recruiting_site_with_stopped_trials_last(
     assert found == [
         ("NCT00000011", True, "RECRUITING", "Kuala Lumpur", "RECRUITING", 316.1),
         ("NCT00000012", True, "RECRUITING", "London", "RECRUITING", 10855.5),
-        ("NCT00000013", False, "COMPLETED", "Johor Bahru", None, 25.4),
     ]
 
 

@@ -443,7 +443,7 @@ class TrialAgent(RecordAgent):
             span.set_attribute("agent.trials_found", len(trials))
         if trials:
             return {"records": trials}
-        message = f"I found no trials for {state['condition']} in the trial data."
+        message = f"I found no recruiting trials for {state['condition']} in the trial data."
         return {"answer": Answer(outcome="no_trials", message=message)}
 
     find = find_trials
