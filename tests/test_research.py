@@ -15,7 +15,7 @@ RESULT = {
     "journalInfo": {"journal": {"title": "Diabetes Care"}},
     "firstPublicationDate": "2026-05-01",
     "pubTypeList": {"pubType": ["Meta-Analysis", "Systematic Review", "Journal Article"]},
-    "abstractText": "<h4>Results</h4>Tirzepatide lowered HbA1c   more than placebo.",
+    "abstractText": "<h4>Results</h4>HbA1c &lt;7% was reached   by more with BMI &gt;30.",
 }
 SEARCH = PaperSearch(medicine="tirzepatide", condition="Diabetes Mellitus, Type 2", terms=["T2D"])
 
@@ -63,7 +63,7 @@ def test_sends_only_the_names_and_keeps_reviews_and_trials_newest_first(
     # The strongest type of evidence is kept, and the markup is removed.
     assert paper.paper_type == "systematic review"
     assert paper.title == "Tirzepatide in type 2 diabetes: a systematic review"
-    assert paper.abstract == "Results Tirzepatide lowered HbA1c more than placebo."
+    assert paper.abstract == "Results HbA1c <7% was reached by more with BMI >30."
     assert paper.source_url == "https://europepmc.org/article/MED/40000001"
     assert str(paper.published_on) == "2026-05-01"
 

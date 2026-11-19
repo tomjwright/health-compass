@@ -28,6 +28,8 @@ PAPER_TYPES = {
     "Randomized Controlled Trial": "randomised controlled trial",
 }
 TAG = re.compile(r"<[^>]+>")
+# Markup that was escaped once more. Only these tags, so "HbA1c <7% ... BMI >30" stays.
+ESCAPED_TAG = re.compile(r"</?(i|b|em|strong|sup|sub|u|p|br|h\d)\b[^<>]*>", re.IGNORECASE)
 
 Name = Annotated[str, Field(min_length=2, max_length=100)]
 
@@ -141,4 +143,4 @@ def paper(result: dict[str, Any]) -> Paper | None:
 def plain(text: str) -> str:
     """Europe PMC marks up titles and abstracts with HTML, e.g. <h4>Methods</h4>, and sometimes
     escapes it once more (&lt;i&gt;)."""
-    return " ".join(TAG.sub(" ", html.unescape(TAG.sub(" ", text))).split())
+    return " ".join(ESCAPED_TAG.sub(" ", html.unescape(TAG.sub(" ", text))).split())
