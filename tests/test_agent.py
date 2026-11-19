@@ -1,4 +1,3 @@
-import re
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -39,8 +38,9 @@ class ApprovingJudge(FakeModel):
     def invoke(self, messages: list[tuple[str, str]]) -> Any:
         self.prompts.append("\n".join(text for _, text in messages))
         verdicts = []
-        for nct_id in re.findall(r"^(NCT\d{8})$", messages[-1][1], re.MULTILINE):
-            verdicts.append(NoteVerdict(nct_id=nct_id, supported=True))
+        # Each record starts with its ID on a line of its own.
+        for record in messages[-1][1].split("\n\n"):
+            verdicts.append(NoteVerdict(id=record.split("\n")[0], supported=True))
         return Verdicts(verdicts=verdicts)
 
 
@@ -112,14 +112,14 @@ def test_retries_when_the_judge_finds_a_note_its_record_does_not_support() -> No
     model = FakeModel(SEARCH, GOOD, GOOD)
     rejects_one = Verdicts(
         verdicts=[
-            NoteVerdict(nct_id="NCT00000011", supported=True),
-            NoteVerdict(nct_id="NCT00000012", supported=False),
+            NoteVerdict(id="NCT00000011", supported=True),
+            NoteVerdict(id="NCT00000012", supported=False),
         ]
     )
     approves_both = Verdicts(
         verdicts=[
-            NoteVerdict(nct_id="NCT00000011", supported=True),
-            NoteVerdict(nct_id="NCT00000012", supported=True),
+            NoteVerdict(id="NCT00000011", supported=True),
+            NoteVerdict(id="NCT00000012", supported=True),
         ]
     )
     judge = FakeModel(rejects_one, approves_both)

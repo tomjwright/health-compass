@@ -41,14 +41,14 @@ def test_scores_outcomes_refusals_and_grounded_notes(
     judge = FakeModel(
         Verdicts(
             verdicts=[
-                NoteVerdict(nct_id="NCT07368842", supported=True),
-                NoteVerdict(nct_id="NCT07536100", supported=True),
+                NoteVerdict(id="NCT07368842", supported=True),
+                NoteVerdict(id="NCT07536100", supported=True),
             ]
         ),
         Verdicts(
             verdicts=[
-                NoteVerdict(nct_id="NCT07368842", supported=True),
-                NoteVerdict(nct_id="NCT07536100", supported=False),
+                NoteVerdict(id="NCT07368842", supported=True),
+                NoteVerdict(id="NCT07536100", supported=False),
             ]
         ),
     )
