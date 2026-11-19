@@ -1,6 +1,6 @@
 "use client";
 
-import { circle, circleMarker, control, latLngBounds, layerGroup, map, polyline, tileLayer, type CircleMarker, type LatLngTuple, type LayerGroup, type Map as LeafletMap } from "leaflet";
+import { circleMarker, control, latLngBounds, layerGroup, map, tileLayer, type CircleMarker, type LatLngTuple, type LayerGroup, type Map as LeafletMap } from "leaflet";
 import { useEffect, useRef } from "react";
 
 export type Coordinates = {
@@ -20,32 +20,6 @@ const localRadiusKm = 50;
 const maxFocusSites = 5;
 const maxFocusZoom = 11;
 const siteZoom = 9;
-const cutoffStyle = { color: "#1d4ed8", weight: 2, dashArray: "4 6", interactive: false };
-
-function geodesicCutoff([latitude, longitude]: LatLngTuple, radiusKm: number): LatLngTuple[] {
-  const radians = Math.PI / 180;
-  const lat = latitude * radians;
-  const angle = radiusKm / 6371;
-  const enclosesPole = Math.abs(lat) + angle > Math.PI / 2;
-  const startBearing = enclosesPole && latitude < 0 ? Math.PI : 0;
-  // Start a polar boundary on the far side of the map, then unwrap successive
-  // points to keep the outline continuous at the edge of the displayed world.
-  let previousLongitude = enclosesPole ? longitude + 180 * Math.sign(latitude) : longitude;
-  const points: LatLngTuple[] = [];
-  for (let step = 0; step <= 180; step++) {
-    const bearing = startBearing + step * (Math.PI / 90);
-    const sinLat = Math.sin(lat) * Math.cos(angle) + Math.cos(lat) * Math.sin(angle) * Math.cos(bearing);
-    const boundaryLat = Math.asin(Math.max(-1, Math.min(1, sinLat))) / radians;
-    const delta = Math.atan2(
-      Math.sin(bearing) * Math.sin(angle),
-      Math.cos(lat) * Math.cos(angle) - Math.sin(lat) * Math.sin(angle) * Math.cos(bearing),
-    ) / radians;
-    const boundaryLon = longitude + delta + Math.round((previousLongitude - longitude - delta) / 360) * 360;
-    points.push([boundaryLat, boundaryLon]);
-    previousLongitude = boundaryLon;
-  }
-  return points;
-}
 
 export type TrialSelection = { nctId: string };
 
@@ -91,14 +65,6 @@ export default function TrialMap({ sites, origin, selection, radiusKm }: {
       circleMarker(center, { radius: 12, color: "#1d4ed8", fillColor: "#dbeafe", fillOpacity: 1 })
         .addTo(layers).bindTooltip(radiusKm != null ? "Search location" : "Distance reference");
     }
-    if (center && radiusKm != null) {
-      // Leaflet's projected circle is an approximation that distorts at continental scale.
-      const cutoff = (radiusKm > 1000
-        ? polyline(geodesicCutoff(center, radiusKm), cutoffStyle)
-        : circle(center, { ...cutoffStyle, radius: radiusKm * 1000, fillOpacity: 0.05 })
-      ).addTo(layers);
-      if (radiusKm > 100 || sites.length === 0) bounds.extend(cutoff.getBounds());
-    }
     const focusNearby = radiusKm != null && radiusKm <= 100;
     const nearest = [...sites].sort((left, right) => (left.distance_km ?? Infinity) - (right.distance_km ?? Infinity));
     const nearby = nearest.filter((site) => (site.distance_km ?? Infinity) <= localRadiusKm).slice(0, maxFocusSites);
@@ -114,7 +80,11 @@ export default function TrialMap({ sites, origin, selection, radiusKm }: {
       markers.set(site.nct_id, marker);
       if (!focusNearby || focusSites.has(site)) bounds.extend(point);
     }
-    if (bounds.isValid()) view.fitBounds(bounds, { padding: [28, 28], maxZoom: maxFocusZoom, animate: false });
+    if (center && sites.length === 0) {
+      view.setView(center, siteZoom, { animate: false });
+    } else if (bounds.isValid()) {
+      view.fitBounds(bounds, { padding: [28, 28], maxZoom: maxFocusZoom, animate: false });
+    }
   }, [sites, origin, radiusKm]);
 
   useEffect(() => {

@@ -421,7 +421,6 @@ export default function FindTrials() {
             <div className="map-key">
               {sites.length > 0 && <span><i /> One pin per mapped study</span>}
               {distanceOrigin && <span><i className="origin-marker" /> {referenceCity ? "Selected city" : "Your location"}</span>}
-              {radiusKm != null && <span><i className="radius-marker" /> {radiusKm.toLocaleString("en")} km cutoff</span>}
             </div>
           </div>
           <div className="results">
