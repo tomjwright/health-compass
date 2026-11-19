@@ -117,7 +117,11 @@ detail that isn't in the record is unsupported."""
 
 DOSE = re.compile(r"\b\d+(\.\d+)?\s?(mg|mcg|µg|ml|iu|units?)\b", re.IGNORECASE)
 ADVICE = re.compile(r"\byou should (take|start|stop|use)\b|\b(take|increase|reduce) your\b", re.I)
-RANKING = re.compile(r"\b(best|most effective|strongest)\b", re.IGNORECASE)
+RANKING = re.compile(
+    r"\b(best|most effective|strongest|(better|safer|stronger|more effective) than|superior|"
+    r"first[- ]line|preferred)\b",
+    re.IGNORECASE,
+)
 
 
 def chat_model() -> BaseChatModel:

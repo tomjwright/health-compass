@@ -83,6 +83,17 @@ def test_retries_when_the_judge_finds_a_note_its_approval_does_not_support() -> 
     assert "the note on 1 says something its record doesn't" in model.prompts[-1]
 
 
+@pytest.mark.parametrize(
+    "summary",
+    ["Eudrug works better than SKINBRAND.", "Eudrug is superior.", "SKINBRAND is first-line."],
+)
+def test_rejects_drafts_that_compare_the_medicines(summary: str) -> None:
+    model = FakeModel(SEARCH, Draft(summary=summary, notes=GOOD.notes), GOOD)
+    answer = ask(model, "What's approved for psoriasis?")
+    assert answer.outcome == "answered"
+    assert "it ranks the medicines" in model.prompts[-1]
+
+
 def test_shows_only_the_approvals_when_both_drafts_fail_the_checks() -> None:
     model = FakeModel(SEARCH, RANKED, INVENTED)
     judge = ApprovingJudge()
