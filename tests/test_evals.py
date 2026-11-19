@@ -21,7 +21,6 @@ SUITE = {
 def test_scores_outcomes_refusals_and_grounded_notes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("RAW_DATA_DIR", str(tmp_path / "raw"))
     monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
     build_eval_tables(tmp_path)
     draft = Draft(

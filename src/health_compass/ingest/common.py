@@ -1,6 +1,5 @@
 """What the ingestion sources share: retries, HTTP and the dlt pipeline into raw.duckdb."""
 
-import json
 import logging
 import os
 import time
@@ -9,7 +8,6 @@ from typing import Any
 
 import dlt
 import httpx
-from dbos import DBOS
 from dlt.common.schema.typing import TSchemaContractDict
 
 # How many times to try each request before giving up (a 503 or dropped connection is often brief).
@@ -57,10 +55,10 @@ def with_retries(url: str, attempt_request: Any) -> Any:
             time.sleep(2**attempt)
 
 
-def get_json(url: str) -> Any:
+def get_json(url: str, params: dict[str, str | int] | None = None) -> Any:
     def attempt() -> Any:
         with http_client() as client:
-            response = client.get(url)
+            response = client.get(url, params=params)
         if response.is_error:
             raise RuntimeError(f"HTTP {response.status_code} from {url}")
         return response.json()
@@ -80,11 +78,3 @@ def download(url: str, path: Path) -> None:
                     file.write(chunk)
 
     with_retries(url, attempt)
-
-
-@DBOS.step()
-def write_manifest(run_dir: str, manifest: dict[str, Any]) -> None:
-    # Written to a temporary file, then renamed, so a crash never leaves half a manifest.
-    path = Path(run_dir) / "manifest.json"
-    path.with_suffix(".tmp").write_text(json.dumps(manifest, indent=2))
-    path.with_suffix(".tmp").replace(path)

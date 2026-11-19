@@ -27,7 +27,6 @@ uv run pre-commit run --all-files
 docker compose up -d                      # Postgres (DBOS, LangGraph) + Jaeger (traces)
 uv run --env-file .env uvicorn health_compass.api:app --reload
 uv run --env-file .env python -m health_compass.ingest.clinicaltrials [--max-pages N]
-uv run python -m health_compass.ingest.clinicaltrials --accept-schema   # after a schema change
 uv run --env-file .env python -m health_compass.ingest.openfda   # US approvals and labels, once a day
 uv run --env-file .env python -m health_compass.ingest.ema       # EU medicines, once a day
 uv run --env-file .env python -m health_compass.transform   # dbt build into data/health_compass.duckdb
@@ -35,12 +34,13 @@ uv run --env-file .env python -m health_compass.transform --full-refresh   # rep
 ```
 
 ## Architecture in one line
-ClinicalTrials.gov → DBOS workflow → raw JSON files → Python load into `raw` tables; openFDA, EMA → dlt → `data/raw.duckdb`;
-both → dbt (DuckDB) → marts → LangGraph agents →
+ClinicalTrials.gov, openFDA, EMA → dlt → `data/raw.duckdb` → dbt (DuckDB) → marts → LangGraph agents →
 FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoint in `.env`.
 
 ## Gotchas
-- DBOS saves each step's result, including errors, and replays them. `resume` re-raises a
+- Models that read `raw.duckdb` must be tables: a view would point at `raw_data`, which readers
+  don't attach.
+- DBOS (agent runs only) saves each step's result, including errors, and replays them. `resume` re-raises a
   failed step's error; `fork` from that step re-runs it.
 - Run dbt in its own process: in-process, DuckDB keeps small writes in the `.wal` file until the
   connection closes, so swapping in the `.duckdb` file alone loses them.

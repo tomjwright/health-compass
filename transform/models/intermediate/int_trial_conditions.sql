@@ -1,16 +1,18 @@
 -- One row per trial per condition, from both vocabularies.
 select distinct
-    trial_key,
+    versions.trial_key,
     'reported' as vocabulary,
-    condition as condition_name,
+    conditions.condition_name,
     cast(null as varchar) as mesh_id
-from {{ ref('int_trial_versions') }}, unnest(conditions) as t (condition)
-where is_current
+from {{ ref('int_trial_versions') }} as versions
+inner join {{ ref('stg_clinicaltrials__conditions') }} as conditions using (study_id)
+where versions.is_current
 union all
 select distinct
-    trial_key,
+    versions.trial_key,
     'mesh' as vocabulary,
-    mesh ->> 'term' as condition_name,
-    mesh ->> 'id' as mesh_id
-from {{ ref('int_trial_versions') }}, unnest(condition_meshes) as t (mesh)
-where is_current
+    meshes.condition_name,
+    meshes.mesh_id
+from {{ ref('int_trial_versions') }} as versions
+inner join {{ ref('stg_clinicaltrials__condition_meshes') }} as meshes using (study_id)
+where versions.is_current

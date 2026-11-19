@@ -7,10 +7,10 @@ searches the same data. The cases and the thresholds are in evals/cases.yaml. CI
 the release gate: a score below its threshold fails the build, so the change can't merge.
 """
 
+import gzip
 import json
 import logging
 import os
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -21,7 +21,7 @@ from langchain_core.language_models import BaseChatModel
 
 from health_compass import transform
 from health_compass.agent import TrialAgent, chat_model, judge_model
-from health_compass.ingest.clinicaltrials import raw_dir
+from health_compass.ingest.clinicaltrials import load_studies
 from health_compass.judge import unsupported_notes
 from health_compass.telemetry import setup_logging
 
@@ -32,14 +32,12 @@ RESULTS_FILE = Path("data/eval_results.json")
 
 
 def build_eval_tables(workdir: Path) -> None:
-    """Builds the trial tables in `workdir` from the trials file, as one complete load."""
-    os.environ["RAW_DATA_DIR"] = str(workdir / "raw")
+    """Builds the trial tables in `workdir` from the trials file, as one load."""
+    os.environ["RAW_DUCKDB_PATH"] = str(workdir / "raw.duckdb")
+    os.environ["DLT_DATA_DIR"] = str(workdir / "dlt")
     os.environ["DUCKDB_PATH"] = str(workdir / "health_compass.duckdb")
-    load = raw_dir() / "evals"
-    load.mkdir(parents=True)
-    shutil.copy(EVALS_DIR / "trials.json.gz", load / "page-00001.json.gz")
-    manifest = {"data_timestamp": "2026-11-17", "complete": True}
-    (load / "manifest.json").write_text(json.dumps(manifest))
+    page = json.loads(gzip.decompress((EVALS_DIR / "trials.json.gz").read_bytes()))
+    load_studies(page["studies"], "2026-11-17T00:00:00")
     transform.build()
 
 

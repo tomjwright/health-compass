@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: stg_clinicaltrials__loads
-    description: One row per complete load.
+    description: One row per load.
     columns:
       - { name: load_id, data_type: varchar, constraints: [{ type: not_null }], data_tests: [unique] }
       - { name: data_timestamp, data_type: timestamp, description: When ClinicalTrials.gov published the data. }
@@ -12,6 +12,7 @@ models:
   - name: stg_clinicaltrials__studies
     description: One row per trial per load (append-only), with the fields the marts use, renamed and typed.
     columns:
+      - { name: study_id, data_type: varchar, constraints: [{ type: not_null }], description: "dlt's row ID, which the list models join on." }
       - { name: load_id, data_type: varchar, constraints: [{ type: not_null }] }
       - { name: data_timestamp, data_type: timestamp }
       - { name: nct_id, data_type: varchar, constraints: [{ type: not_null }] }
@@ -30,10 +31,38 @@ models:
       - { name: maximum_age, data_type: varchar }
       - { name: healthy_volunteers, data_type: boolean }
       - { name: eligibility_criteria, data_type: varchar }
-      - { name: conditions, data_type: "varchar[]", description: As the sponsor wrote them. }
-      - { name: condition_meshes, data_type: "json[]", description: "MeSH terms: [{id, term}]." }
-      - { name: interventions, data_type: "json[]" }
-      - { name: locations, data_type: "json[]" }
+
+  - name: stg_clinicaltrials__conditions
+    description: One row per condition a trial lists, as the sponsor wrote it.
+    columns:
+      - { name: study_id, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: condition_name, data_type: varchar }
+
+  - name: stg_clinicaltrials__condition_meshes
+    description: One row per MeSH heading ClinicalTrials.gov derived for a trial.
+    columns:
+      - { name: study_id, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: mesh_id, data_type: varchar }
+      - { name: condition_name, data_type: varchar }
+
+  - name: stg_clinicaltrials__interventions
+    description: One row per intervention a trial lists.
+    columns:
+      - { name: study_id, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: intervention_type, data_type: varchar }
+      - { name: intervention_name, data_type: varchar }
+
+  - name: stg_clinicaltrials__locations
+    description: One row per site a trial lists.
+    columns:
+      - { name: study_id, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: facility, data_type: varchar }
+      - { name: city, data_type: varchar }
+      - { name: state, data_type: varchar }
+      - { name: country, data_type: varchar }
+      - { name: latitude, data_type: double }
+      - { name: longitude, data_type: double }
+      - { name: site_status, data_type: varchar }
 
   - name: stg_fda__products
     description: One row per brand in an FDA drug application, from the newest openFDA load.
