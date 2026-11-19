@@ -18,6 +18,7 @@ const countries = all()
 type Coordinates = { latitude: number; longitude: number };
 type City = Coordinates & { id: number; name: string; admin1?: string; country?: string };
 type CityLookup = { places: City[]; error?: string };
+type SearchError = { message: string; standaloneUrl?: string };
 type Trial = TrialSite & {
   title: string | null;
   city: string | null;
@@ -44,10 +45,17 @@ export default function FindTrials() {
   const [cityLookup, setCityLookup] = useState<CityLookup | null>(null);
   const [results, setResults] = useState<Results | null>(null);
   const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<SearchError | null>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
+  const searchCondition = condition.trim();
   const selectedCity = location && "name" in location ? location : null;
   const showCitySuggestions = !location && city.trim().length >= 2;
+  let emptyResultsMessage = "Enter a condition and location to get started.";
+  if (location) {
+    emptyResultsMessage = searchCondition.length < 2
+      ? "Enter a condition, then select Search trials."
+      : "Select Search trials to find nearby sites.";
+  }
   let cityMessage = "Looking up cities…";
   if (cityLookup) {
     cityMessage = cityLookup.error ?? (cityLookup.places.length ? "Choose a city." : "No matching cities.");
@@ -86,58 +94,80 @@ export default function FindTrials() {
     setLocation(null);
     setCityLookup(null);
     setResults(null);
-    setError("");
+    setError(null);
   }
 
   function locate() {
-    setError("");
+    setError(null);
+    const embedded = window.self !== window.top;
+    const embeddedLocationError = {
+      message: "Location access was blocked here. Open Find Trials in its own tab to try again, or choose a city.",
+      standaloneUrl: window.location.href,
+    };
     if (!navigator.geolocation) {
-      setError("Current location is unavailable. Enter a city instead.");
+      setError(embedded ? embeddedLocationError : {
+        message: "Current location is unavailable in this browser. Choose a city.",
+      });
       return;
     }
     setBusy("Getting your location…");
     navigator.geolocation.getCurrentPosition(
       ({ coords: { latitude, longitude } }) => {
-        setLocation({ latitude, longitude });
+        const coordinates = { latitude, longitude };
+        setLocation(coordinates);
         setCity("");
         setCountryCode("");
         setCityLookup(null);
-        setResults(null);
-        setBusy("");
+        if (searchCondition.length >= 2) {
+          void searchTrials(coordinates);
+        } else {
+          setResults(null);
+          setBusy("");
+        }
       },
-      () => {
-        setError("Couldn’t get your location. Enter a city instead.");
+      (failure) => {
         setBusy("");
+        if (failure.code === failure.PERMISSION_DENIED) {
+          setError(embedded ? embeddedLocationError : {
+            message: "Allow location for this site in your browser settings and try again, or choose a city.",
+          });
+        } else if (failure.code === failure.TIMEOUT) {
+          setError({ message: "The location request timed out. Try again or choose a city." });
+        } else {
+          setError({ message: "Your device couldn’t determine its location. Check your device’s location settings or choose a city." });
+        }
       },
       { timeout: 10000 },
     );
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError("");
-    if (condition.trim().length < 2) {
-      setError("Enter a condition with at least two characters.");
+    setError(null);
+    if (searchCondition.length < 2) {
+      setError({ message: "Enter a condition with at least two characters." });
       return;
     }
     if (!location) {
-      setError("Choose a city from the suggestions, or use your current location.");
+      setError({ message: "Choose a city from the suggestions, or use your current location." });
       return;
     }
+    void searchTrials(location);
+  }
 
-    const { latitude, longitude } = location;
+  async function searchTrials({ latitude, longitude }: Coordinates) {
     setResults(null);
     setBusy("Searching for trials…");
     try {
       const response = await fetch("/api/trials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ condition: condition.trim(), latitude, longitude }),
+        body: JSON.stringify({ condition: searchCondition, latitude, longitude }),
       });
       if (!response.ok) throw new Error("Trial search failed");
       setResults(await response.json());
     } catch {
-      setError("Couldn’t search for trials. Try again in a moment.");
+      setError({ message: "Couldn’t search for trials. Try again in a moment." });
     } finally {
       setBusy("");
     }
@@ -153,7 +183,7 @@ export default function FindTrials() {
           <fieldset disabled={Boolean(busy)}>
             <label>Condition
               <input value={condition} maxLength={100} placeholder="e.g. Alopecia"
-                onChange={(event) => { setCondition(event.target.value); setError(""); }} />
+                onChange={(event) => { setCondition(event.target.value); setError(null); }} />
             </label>
             <label>Country
               <select value={countryCode} onChange={(event) => {
@@ -176,7 +206,7 @@ export default function FindTrials() {
                     setLocation(place);
                     setCity(place.name);
                     setCityLookup(null);
-                    setError("");
+                    setError(null);
                     searchButton.current?.focus();
                   }}>{cityLabel(place)}</button>
                 ))}
@@ -192,14 +222,20 @@ export default function FindTrials() {
             <button type="button" className="secondary locate-button" onClick={locate}>Use current location</button>
             <button type="submit" className="search-button" ref={searchButton}>Search trials</button>
           </fieldset>
+          {error && (
+            <p className="error" role="alert">
+              {error.message} {error.standaloneUrl && (
+                <a href={error.standaloneUrl} target="_blank" rel="noopener noreferrer">Open in a new tab</a>
+              )}
+            </p>
+          )}
         </form>
         <div className="explorer">
           <section className="results" aria-labelledby="results-heading">
             <h2 id="results-heading">Trial results</h2>
             <p className="result-status" role="status">{busy || (results
               ? `${results.trials.length} matching ${results.trials.length === 1 ? "trial" : "trials"} shown`
-              : error ? "" : "Enter a condition and location to get started.")}</p>
-            {error && <p className="error" role="alert">{error}</p>}
+              : error ? "" : emptyResultsMessage)}</p>
             {results && <p className="freshness">ClinicalTrials.gov data as of {results.data_as_of.slice(0, 10)}</p>}
             <ul className="trial-list">
               {results?.trials.map((trial) => (
