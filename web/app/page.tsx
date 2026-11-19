@@ -1,7 +1,8 @@
 "use client";
 
+import { all } from "iso-3166-1";
 import dynamic from "next/dynamic";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { TrialSite } from "./trial-map";
 
 const TrialMap = dynamic(() => import("./trial-map"), {
@@ -9,9 +10,14 @@ const TrialMap = dynamic(() => import("./trial-map"), {
   loading: () => <div className="trial-map" aria-hidden="true" />,
 });
 const noSites: Trial[] = [];
+const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
+const countries = all()
+  .map(({ alpha2 }) => ({ code: alpha2, name: regionNames.of(alpha2) ?? alpha2 }))
+  .sort((left, right) => left.name.localeCompare(right.name, "en"));
 
 type Coordinates = { latitude: number; longitude: number };
 type City = Coordinates & { id: number; name: string; admin1?: string; country?: string };
+type CityLookup = { places: City[]; error?: string };
 type Trial = TrialSite & {
   title: string | null;
   city: string | null;
@@ -32,16 +38,59 @@ function status(code: string) {
 
 export default function FindTrials() {
   const [condition, setCondition] = useState("");
+  const [countryCode, setCountryCode] = useState("");
   const [city, setCity] = useState("");
-  const [location, setLocation] = useState<Coordinates | null>(null);
-  const [cities, setCities] = useState<City[]>([]);
+  const [location, setLocation] = useState<Coordinates | City | null>(null);
+  const [cityLookup, setCityLookup] = useState<CityLookup | null>(null);
   const [results, setResults] = useState<Results | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const selectedCity = location && "name" in location ? location : null;
+  const showCitySuggestions = !location && city.trim().length >= 2;
+  let cityMessage = "Looking up cities…";
+  if (cityLookup) {
+    cityMessage = cityLookup.error ?? (cityLookup.places.length ? "Choose a city." : "No matching cities.");
+  }
+
+  useEffect(() => {
+    if (!showCitySuggestions) return;
+    const controller = new AbortController();
+
+    async function lookup() {
+      try {
+        const response = await fetch("/api/cities", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ city, countryCode }),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("City lookup failed");
+        const places: City[] = await response.json();
+        if (!controller.signal.aborted) setCityLookup({ places });
+      } catch {
+        if (!controller.signal.aborted) {
+          setCityLookup({ places: [], error: "City lookup is temporarily unavailable." });
+        }
+      }
+    }
+
+    const delay = window.setTimeout(lookup, 300);
+    return () => {
+      window.clearTimeout(delay);
+      controller.abort();
+    };
+  }, [city, countryCode, showCitySuggestions]);
+
+  function editLocation() {
+    setLocation(null);
+    setCityLookup(null);
+    setResults(null);
+    setError("");
+  }
 
   function locate() {
     setError("");
-    setCities([]);
     if (!navigator.geolocation) {
       setError("Current location is unavailable. Enter a city instead.");
       return;
@@ -51,6 +100,9 @@ export default function FindTrials() {
       ({ coords: { latitude, longitude } }) => {
         setLocation({ latitude, longitude });
         setCity("");
+        setCountryCode("");
+        setCityLookup(null);
+        setResults(null);
         setBusy("");
       },
       () => {
@@ -61,9 +113,19 @@ export default function FindTrials() {
     );
   }
 
-  async function search({ latitude, longitude }: Coordinates) {
-    setCities([]);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setError("");
+    if (condition.trim().length < 2) {
+      setError("Enter a condition with at least two characters.");
+      return;
+    }
+    if (!location) {
+      setError("Choose a city from the suggestions, or use your current location.");
+      return;
+    }
+
+    const { latitude, longitude } = location;
     setResults(null);
     setBusy("Searching for trials…");
     try {
@@ -81,34 +143,6 @@ export default function FindTrials() {
     }
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    if (condition.trim().length < 2 || (!location && city.trim().length < 2)) {
-      setError("Enter a condition and a city, or use your current location.");
-      return;
-    }
-    if (location) return search(location);
-
-    setResults(null);
-    setBusy("Looking up your city…");
-    try {
-      const response = await fetch("/api/cities", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city }),
-      });
-      if (!response.ok) throw new Error("City lookup failed");
-      const places: City[] = await response.json();
-      if (places.length === 0) setError("No cities found. Try a nearby city.");
-      setCities(places);
-    } catch {
-      setError("City lookup is temporarily unavailable. Try again or use your current location.");
-    } finally {
-      setBusy("");
-    }
-  }
-
   return (
     <>
       <header><span className="brand-mark" aria-hidden="true">✦</span> Health Compass</header>
@@ -119,28 +153,45 @@ export default function FindTrials() {
           <fieldset disabled={Boolean(busy)}>
             <label>Condition
               <input value={condition} maxLength={100} placeholder="e.g. Alopecia"
-                onChange={(event) => { setCondition(event.target.value); setCities([]); }} />
+                onChange={(event) => { setCondition(event.target.value); setError(""); }} />
+            </label>
+            <label>Country
+              <select value={countryCode} onChange={(event) => {
+                setCountryCode(event.target.value);
+                editLocation();
+              }}>
+                <option value="">Any country</option>
+                {countries.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
+              </select>
             </label>
             <label>City
               <input value={city} maxLength={100} placeholder={location ? "Current location selected" : "e.g. Singapore"}
-                onChange={(event) => { setCity(event.target.value); setLocation(null); setCities([]); }} />
+                onChange={(event) => { setCity(event.target.value); editLocation(); }} />
             </label>
-            <button type="button" className="secondary" onClick={locate}>Use current location</button>
-            <button type="submit">Search trials</button>
+            {showCitySuggestions && (
+              <div className="city-options" aria-label="Matching cities" role="group">
+                <p role="status">{cityMessage}</p>
+                {cityLookup?.places.map((place) => (
+                  <button className="secondary" key={place.id} type="button" onClick={() => {
+                    setLocation(place);
+                    setCity(place.name);
+                    setCityLookup(null);
+                    setError("");
+                    searchButton.current?.focus();
+                  }}>{cityLabel(place)}</button>
+                ))}
+                {Boolean(cityLookup?.places.length) && <a href="https://www.geonames.org/">City data by GeoNames</a>}
+              </div>
+            )}
+            {selectedCity && (
+              <div className="city-options">
+                <span>{cityLabel(selectedCity)}</span>
+                <a href="https://www.geonames.org/">City data by GeoNames</a>
+              </div>
+            )}
+            <button type="button" className="secondary locate-button" onClick={locate}>Use current location</button>
+            <button type="submit" className="search-button" ref={searchButton}>Search trials</button>
           </fieldset>
-          {cities.length > 0 && (
-            <div className="city-options" aria-label="Matching cities" role="group">
-              <p>Choose a city to search nearby.</p>
-              {cities.map((place) => (
-                <button className="secondary" key={place.id} type="button" onClick={() => {
-                  setLocation(place);
-                  setCity(cityLabel(place));
-                  void search(place);
-                }}>{cityLabel(place)}</button>
-              ))}
-              <a href="https://www.geonames.org/">City data by GeoNames</a>
-            </div>
-          )}
         </form>
         <div className="explorer">
           <section className="results" aria-labelledby="results-heading">

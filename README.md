@@ -117,7 +117,8 @@ npm --prefix web ci
 npm --prefix web run dev
 ```
 
-Open http://localhost:3000 and search by condition and city, or use your current location.
+Open http://localhost:3000 and enter a condition. Choose a country to narrow city suggestions
+as you type, then select a city and search. You can also use your current location.
 The map shows the site listed for each trial. City lookup uses Open-Meteo (GeoNames) and the
 map uses OpenStreetMap tiles. For a FastAPI server on a different address, set
 `HEALTH_COMPASS_API_URL` in `web/.env.local` before starting Next.js.
