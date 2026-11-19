@@ -21,16 +21,41 @@ const radiusError = `Enter a distance from 1 to ${maxRadius.toLocaleString("en")
 type City = Coordinates & { id: number; name: string; admin1?: string; country?: string };
 type CityLookup = { places: City[]; error?: string };
 type Location = Coordinates | City;
-type SearchArea = { location: Location; radiusKm: number };
+type SearchArea = { location: Location; radiusKm: number | null };
 type TrialQuery = { condition: string; area: SearchArea | null };
-type SearchMode = "nearby" | "all";
+type SearchMode = "nearby" | "all" | "snapshot";
 type SearchError = { message: string; standaloneUrl?: string; retry?: TrialQuery };
 type Results = {
   trials: Trial[];
   total_count: number | null;
   next_page_token: string | null;
   radius_km: number | null;
+  data_as_of?: string;
 };
+type StoredTrial = NonNullable<Trial["nearest_site"]> & {
+  nct_id: string; title: string | null; overall_status: string; site_status: string | null;
+};
+
+async function searchSnapshot(condition: string, location: Location, signal: AbortSignal): Promise<Results> {
+  const { latitude, longitude } = location;
+  const response = await fetch("/api/trials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ condition, latitude, longitude, limit: 100 }),
+    signal,
+    cache: "no-store",
+  });
+  if (response.status === 503) throw new Error("Stored trial data is currently unavailable.");
+  if (!response.ok) throw new Error("Couldn’t search stored trials. Try again in a moment.");
+  const data: { data_as_of: string; trials: StoredTrial[] } = await response.json();
+  return {
+    data_as_of: data.data_as_of, total_count: null, next_page_token: null, radius_km: null,
+    trials: data.trials.map(site => ({
+      nct_id: site.nct_id, title: site.title ?? site.nct_id, nearest_site: site,
+      recruiting_sites: [], studyStatus: site.overall_status, siteStatus: site.site_status,
+    })),
+  };
+}
 
 function cityLabel(city: City) {
   return [...new Set([city.name, city.admin1, city.country].filter(Boolean))].join(", ");
@@ -66,16 +91,18 @@ export default function FindTrials() {
 
   const searchCondition = condition.trim();
   const selectedCity = cityAt(location);
-  const showCitySuggestions = mode === "nearby" && !selectedCity && city.trim().length >= 2;
+  const showCitySuggestions = mode !== "all" && !selectedCity && city.trim().length >= 2;
   const results = view?.results;
   const nearbyArea = view?.query.area;
   const radiusKm = results?.radius_km ?? null;
+  const snapshot = Boolean(results?.data_as_of);
   const distanceOrigin = nearbyArea?.location ?? location;
   const referenceCity = cityAt(distanceOrigin);
   const distanceScaleKm = distanceOrigin ? (radiusKm ?? 20_000) : null;
   const retryQuery = error?.retry;
-  const scope = nearbyArea
-    ? `within ${nearbyArea.radiusKm.toLocaleString("en")} km of ${referenceCity ? cityLabel(referenceCity) : "your location"}`
+  const locationLabel = referenceCity ? cityLabel(referenceCity) : "your location";
+  const scope = nearbyArea?.radiusKm != null
+    ? `within ${nearbyArea.radiusKm.toLocaleString("en")} km of ${locationLabel}`
     : "worldwide";
   const sitesByTrial = useMemo(() => {
     const sites = new Map<string, TrialSite>();
@@ -87,13 +114,13 @@ export default function FindTrials() {
   }, [results, distanceOrigin]);
   const trials = useMemo(() => {
     const found = results?.trials ?? [];
-    if (radiusKm != null || !distanceOrigin) return found;
+    if (snapshot || radiusKm != null || !distanceOrigin) return found;
     return [...found].sort((left, right) => {
       const leftDistance = sitesByTrial.get(left.nct_id)?.distance_km ?? Infinity;
       const rightDistance = sitesByTrial.get(right.nct_id)?.distance_km ?? Infinity;
       return leftDistance - rightDistance;
     });
-  }, [results, radiusKm, distanceOrigin, sitesByTrial]);
+  }, [results, snapshot, radiusKm, distanceOrigin, sitesByTrial]);
   const sites = useMemo(() => trials.flatMap(({ nct_id }) => {
     const site = sitesByTrial.get(nct_id);
     return site ? [site] : [];
@@ -102,13 +129,15 @@ export default function FindTrials() {
   if (results) {
     if (trials.length) {
       resultMessage = `Showing ${trials.length}${results.total_count == null ? "" : ` of ${results.total_count}`}.`;
+    } else if (snapshot) {
+      resultMessage = "No matches in the stored trial data. Try another condition name.";
     } else if (nearbyArea) {
       resultMessage = "No recruiting studies found within this radius. Try a larger distance or another location.";
     } else {
       resultMessage = "No recruiting studies found.";
     }
   } else if (!error) {
-    resultMessage = "Enter a condition to find recruiting studies.";
+    resultMessage = mode === "snapshot" ? "Enter a condition to find stored trial records." : "Enter a condition to find recruiting studies.";
   }
 
   useEffect(() => {
@@ -163,10 +192,19 @@ export default function FindTrials() {
     const controller = new AbortController();
     request.current = controller;
     setError(null);
-    setBusy(query.area ? "Updating nearby trials…" : "Searching worldwide…");
+    const stored = query.area?.radiusKm === null;
+    setBusy(stored ? "Searching stored trials…" : query.area ? "Updating nearby trials…" : "Searching worldwide…");
     async function fetchTrials() {
       const { area } = query;
       try {
+        if (stored && area) {
+          const page = await searchSnapshot(query.condition, area.location, controller.signal);
+          if (!controller.signal.aborted) {
+            setSelection(null);
+            setView({ query, results: page });
+          }
+          return;
+        }
         const response = await fetch("/api/trials/search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -190,9 +228,11 @@ export default function FindTrials() {
             total_count: previous.results.total_count,
           } : page,
         }));
-      } catch {
+      } catch (failure) {
         if (!controller.signal.aborted) {
-          setError({ message: "Couldn’t search for trials. Try again in a moment.", retry: pageToken ? undefined : query });
+          const message = stored && failure instanceof Error && failure.message === "Stored trial data is currently unavailable."
+            ? failure.message : "Couldn’t search for trials. Try again in a moment.";
+          setError({ message, retry: pageToken ? undefined : query });
         }
       } finally {
         if (!controller.signal.aborted) setBusy("");
@@ -203,7 +243,7 @@ export default function FindTrials() {
   }
 
   function locate(phrase: string, searchMode: SearchMode = "nearby") {
-    const nearby = searchMode === "nearby";
+    const nearby = searchMode !== "all";
     if (nearby) {
       cancelPending();
       setError(null);
@@ -229,8 +269,8 @@ export default function FindTrials() {
         if (!nearby) return;
         setCity("");
         setCityLookup(null);
-        const radiusKm = latestRadius.current;
-        if (phrase.length >= 2 && radiusKm != null) {
+        const radiusKm = searchMode === "snapshot" ? null : latestRadius.current;
+        if (phrase.length >= 2 && (searchMode === "snapshot" || radiusKm != null)) {
           searchTrials({ condition: phrase, area: { location: origin, radiusKm } });
         } else {
           setBusy("");
@@ -256,19 +296,19 @@ export default function FindTrials() {
     if (!location) locate(phrase, "all");
   }
 
-  function submitNearby(phrase: string) {
+  function submitNearby(phrase: string, localMode: "nearby" | "snapshot") {
     if (city.trim() && !selectedCity) {
       setError({ message: "Choose a city from the suggestions, or use your current location." });
       cityField.current?.focus();
       return;
     }
-    const radiusKm = distanceLimit(radius);
-    if (radiusKm == null) {
+    const radiusKm = localMode === "snapshot" ? null : distanceLimit(radius);
+    if (localMode === "nearby" && radiusKm == null) {
       setError({ message: radiusError });
     } else if (location) {
       searchTrials({ condition: phrase, area: { location, radiusKm } });
     } else {
-      locate(phrase);
+      locate(phrase, localMode);
     }
   }
 
@@ -279,7 +319,7 @@ export default function FindTrials() {
       return;
     }
     setSubmittedCondition(searchCondition);
-    if (mode === "nearby") submitNearby(searchCondition);
+    if (mode !== "all") submitNearby(searchCondition, mode);
     else searchWorldwide(searchCondition);
   }
 
@@ -288,10 +328,14 @@ export default function FindTrials() {
     cancelPending();
     setMode(next);
     setError(null);
+    if (mode === "snapshot" || next === "snapshot") {
+      setView(null);
+      setSelection(null);
+    }
     if (searchCondition.length < 2) return;
     setSubmittedCondition(searchCondition);
     if (next === "all") searchWorldwide(searchCondition);
-    else submitNearby(searchCondition);
+    else submitNearby(searchCondition, next);
   }
 
   function editLocation() {
@@ -310,8 +354,8 @@ export default function FindTrials() {
     cityField.current?.focus();
     if (searchCondition.length < 2) return;
     setSubmittedCondition(searchCondition);
-    const radiusKm = distanceLimit(radius);
-    if (radiusKm != null) searchTrials({ condition: searchCondition, area: { location: place, radiusKm } });
+    const radiusKm = mode === "snapshot" ? null : distanceLimit(radius);
+    if (mode === "snapshot" || radiusKm != null) searchTrials({ condition: searchCondition, area: { location: place, radiusKm } });
     else setError({ message: radiusError });
   }
 
@@ -353,12 +397,18 @@ export default function FindTrials() {
         <section className="explorer" aria-labelledby="results-heading">
           <div className="results-heading">
             <div>
-              <h2 id="results-heading">{results ? `Recruiting studies ${scope}` : "Trial results"}</h2>
+              <h2 id="results-heading">{snapshot ? `Stored trial records ranked from ${locationLabel}` :
+                results ? `Recruiting studies ${scope}` : "Trial results"}</h2>
               <p className="result-status" role="status">{busy || resultMessage}</p>
+              {mode === "snapshot" && <p className="freshness">
+                Up to 100 matching records, with recruiting studies first.
+                {results?.data_as_of && ` Source snapshot: ${new Date(results.data_as_of).toLocaleDateString("en", { dateStyle: "medium", timeZone: "UTC" })}.`}
+              </p>}
             </div>
-            <div className="search-modes" role="group" aria-label="Where to search">
+            <div className="search-modes" role="group" aria-label="Trial search mode">
               <button type="button" aria-pressed={mode === "nearby"} onClick={() => changeMode("nearby")}>Nearby</button>
               <button type="button" aria-pressed={mode === "all"} onClick={() => changeMode("all")}>All trials</button>
+              <button type="button" aria-pressed={mode === "snapshot"} onClick={() => changeMode("snapshot")}>Stored trials</button>
             </div>
             {error && <div className="results-error">
               <p className="error" role="alert">
@@ -370,7 +420,7 @@ export default function FindTrials() {
             </div>}
           </div>
           <div className="map-panel">
-            {mode === "nearby" && <section className="map-controls" aria-labelledby="locality-heading">
+            {mode !== "all" && <section className="map-controls" aria-labelledby="locality-heading">
               <div className="locality-heading">
                 <div>
                   <h3 id="locality-heading">Search area</h3>
@@ -378,7 +428,7 @@ export default function FindTrials() {
                 </div>
                 <button type="button" className="secondary" onClick={() => {
                   if (searchCondition.length >= 2) setSubmittedCondition(searchCondition);
-                  locate(searchCondition);
+                  locate(searchCondition, mode);
                 }}>Use current location</button>
               </div>
               <div className="city-fields">
@@ -405,7 +455,7 @@ export default function FindTrials() {
                   {Boolean(cityLookup?.places.length) && <a href="https://www.geonames.org/">City data by GeoNames</a>}
                 </div>
               )}
-              <div className="radius-control">
+              {mode === "nearby" && <div className="radius-control">
                 <label htmlFor="radius-slider">Search radius</label>
                 <input id="radius-slider" type="range" min={1} max={maxRadius} step={1}
                   value={distanceLimit(radius) ?? defaultRadius} onChange={event => changeRadius(event.target.value)} />
@@ -415,7 +465,7 @@ export default function FindTrials() {
                     onChange={event => changeRadius(event.target.value)} />
                   <span>km</span>
                 </div>
-              </div>
+              </div>}
             </section>}
             <TrialMap sites={sites} origin={distanceOrigin} selection={selection} radiusKm={radiusKm} />
             <div className="map-key">
@@ -426,7 +476,8 @@ export default function FindTrials() {
           <div className="results">
             {distanceScaleKm != null && sites.length > 0 && (
               <div className="distance-scale">
-                <p>{radiusKm == null ? "Loaded studies, nearest first · straight-line distance" : "Closest recruiting sites first · straight-line distance"}</p>
+                <p>{snapshot ? "Straight-line distance to each listed site" :
+                  radiusKm == null ? "Loaded studies, nearest first · straight-line distance" : "Closest recruiting sites first · straight-line distance"}</p>
                 <div><span>0 km</span><span>{distanceScaleKm.toLocaleString("en")} km</span></div>
               </div>
             )}

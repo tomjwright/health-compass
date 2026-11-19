@@ -11,6 +11,8 @@ export type Trial = {
   title: string;
   nearest_site: (Place & Coordinates & { distance_km: number }) | null;
   recruiting_sites: (Place & { point: { lat: number; lon: number } | null })[];
+  studyStatus?: string;
+  siteStatus?: string | null;
 };
 
 function placeLabel(place: Place) {
@@ -60,11 +62,13 @@ export function TrialResult({ trial, site, scaleKm, selected, onSelect }: {
   const distanceLabel = distance?.toLocaleString("en", { maximumFractionDigits: distance < 10 ? 1 : 0 });
   return (
     <li>
+      {trial.studyStatus && <span className="badge">{formatStatus(trial.studyStatus)}</span>}
       <h3>{site ? <button type="button" className="trial-focus" aria-pressed={selected} onClick={onSelect}>
         {trial.title}
       </button> : trial.title}</h3>
       <p className="trial-place">{label || place?.facility || "Recruiting location unavailable"}</p>
       {place?.facility && label && <p>{place.facility}</p>}
+      {trial.studyStatus && <p>Site status: {trial.siteStatus ? formatStatus(trial.siteStatus) : "Unavailable"}</p>}
       {otherPlaces.length > 0 && (
         <details className="trial-places">
           <summary>{otherPlaces.length} more {otherPlaces.length === 1 ? "location" : "locations"}</summary>
@@ -84,4 +88,9 @@ export function TrialResult({ trial, site, scaleKm, selected, onSelect }: {
       </a></p>
     </li>
   );
+}
+
+function formatStatus(status: string) {
+  const words = status.replaceAll("_", " ").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
