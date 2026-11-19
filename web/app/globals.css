@@ -55,6 +55,10 @@ a { color: #075e60; }
 .city-options a, .freshness, footer { color: #4b616a; font-size: .8rem; }
 .explorer { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); overflow: hidden; }
 .results { padding: 20px; max-height: 540px; overflow: auto; overflow-wrap: anywhere; }
+.trial-scope { max-width: 270px; margin-bottom: 16px; }
+.worldwide-form { grid-template-columns: minmax(0, 1fr) auto; }
+.worldwide-results { display: block; }
+.worldwide-results .results { max-height: none; }
 h2 { margin: 0; font-size: 1.2rem; }
 .result-status, .error { margin: 8px 0; font-size: .93rem; }
 .result-status:empty { display: none; }
@@ -75,6 +79,7 @@ footer { padding: 16px 0 24px; }
   fieldset { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .locate-button, .search-button { grid-area: auto; }
   label, .city-options { grid-area: auto / 1 / auto / -1; }
+  .worldwide-form { grid-template-columns: minmax(0, 1fr); }
   .explorer { grid-template-columns: minmax(0, 1fr); }
   .trial-map { grid-row: 1; min-height: 280px; }
   .results { max-height: none; }

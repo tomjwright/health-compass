@@ -12,11 +12,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from dbos import DBOS
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-from health_compass import trials
+from health_compass import trials, worldwide_trials
 from health_compass.agent import Answer, answer_question
 from health_compass.telemetry import setup_logging, setup_tracing
 
@@ -57,6 +57,19 @@ def find_trials(search: trials.TrialSearch) -> trials.TrialResults:
         return trials.find_trials(search)
     except trials.TablesNotBuiltError:
         raise HTTPException(503, NOT_BUILT) from None
+
+
+@app.post("/trials/worldwide")
+def find_worldwide_trials(
+    search: worldwide_trials.WorldwideSearch, response: Response
+) -> worldwide_trials.WorldwideResults:
+    """Recruiting studies from the live ClinicalTrials.gov search, without a location."""
+    try:
+        results = worldwide_trials.search_registry(search)
+    except (OSError, ValidationError):
+        raise HTTPException(502, "ClinicalTrials.gov search is temporarily unavailable.") from None
+    response.headers["Cache-Control"] = "no-store"
+    return results
 
 
 class Question(BaseModel):
