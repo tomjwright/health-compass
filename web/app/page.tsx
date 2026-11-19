@@ -120,9 +120,9 @@ export default function FindTrials() {
         setCityLookup(null);
         if (searchCondition.length >= 2) {
           void searchTrials(coordinates);
-          } else {
-            setResults(null);
-            setSelection(null);
+        } else {
+          setResults(null);
+          setSelection(null);
           setBusy("");
         }
       },
