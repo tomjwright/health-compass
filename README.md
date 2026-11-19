@@ -134,19 +134,8 @@ ClinicalTrials.gov and applies the exact straight-line cutoff locally. City look
 Open-Meteo (GeoNames), and the map uses OpenStreetMap tiles. For a FastAPI server on a different
 address, set `HEALTH_COMPASS_API_URL` in `web/.env.local` before starting Next.js.
 
-Once the trial tables are built (see below), `POST /trials` finds recruiting trials for a
-condition, each at its nearest recruiting site in the latest warehouse build. Results are
-ordered by distance. The search is a POST body, so the condition and location stay out of
-URLs, logs and traces.
-
-```bash
-curl -s localhost:8000/trials -H 'content-type: application/json' \
-  -d '{"condition": "alopecia", "latitude": 1.29, "longitude": 103.85, "limit": 3}'
-```
-
-The query is plain SQL in `src/health_compass/find_trials.sql`. The distance comes from the
-haversine formula. Each request opens its own read-only DuckDB connection, so it reads the latest
-build.
+Ask and Find Trials share this live search. The trial tables in DuckDB support analysis of
+trial history and changes in recruiting status.
 
 ### Find approved medicines
 
@@ -220,10 +209,9 @@ is shown.
   checks against the abstract. A sentence may compare medicines only as its paper does; the
   summary may not rank them. If Europe PMC can't be reached, the approvals are shown without
   research.
-- **`find_trials`:** the same recruiting-only search as `/trials`, using the official MeSH
-  heading the LLM names ("hair loss" becomes "Alopecia", "T2DM" becomes "Diabetes Mellitus, Type 2").
-  Trials store MeSH headings next to the sponsor's own wording, so this finds trials however
-  the user put it.
+- **`find_trials`:** the live recruiting-only search behind `/trials/search`, using the
+  condition the LLM extracts. Ask shows up to five studies at their nearest recruiting site
+  within 100 km of the selected location.
 - **`write_answer`:** the LLM writes a summary and one note per trial, citing each by its number
   in the list. It sees each trial's ID, title and status, never the location.
 - **`check_output` (gateway):** every note must cite a trial that was found, with no doses or
@@ -232,9 +220,10 @@ is shown.
   rewritten once with the reasons; if it fails again, the trials are shown without notes
   (`"outcome": "trials_only"`). Set `JUDGE_MODEL` to use a different LLM for the judge.
 
-Status, site and distance always come from the tables, not the LLM. To use another model, set
-`LLM_MODEL` in `.env` (e.g. `anthropic:claude-haiku-4-5`) and `uv add` its LangChain package
-(`langchain-anthropic`). Each node is a span in Jaeger; the question and location are never logged.
+Trial status and site come from ClinicalTrials.gov. Python calculates the distance.
+To use another model, set `LLM_MODEL` in `.env` (e.g. `anthropic:claude-haiku-4-5`) and
+`uv add` its LangChain package (`langchain-anthropic`). Each node is a span in Jaeger.
+The question and location are never logged.
 The free Gemini tier may use questions to improve Google's products.
 
 ### Run the evals (the release gate)
@@ -243,7 +232,7 @@ The free Gemini tier may use questions to improve Google's products.
 uv run --env-file .env python -m health_compass.evals
 ```
 
-This asks the agent the 26 questions in `evals/cases.yaml`, from Singapore, about 30 real trials
+This asks the agent the 26 questions in `evals/cases.yaml`, mostly from Singapore, about 30 real trials
 saved in `evals/trials.json.gz` and 30 real US and EU approvals saved in
 `evals/approvals.json.gz`, so every run searches the same data. It takes about 4 minutes,
 prints each case, writes `data/eval_results.json`, and fails if a score is below its threshold:

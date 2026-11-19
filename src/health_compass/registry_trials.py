@@ -1,16 +1,23 @@
 """Search live ClinicalTrials.gov recruiting studies by condition, country and distance."""
 
 import urllib.request
+from collections.abc import Callable
+from http.client import HTTPException
 from math import asin, cos, radians, sin, sqrt
 from typing import Literal
 from urllib.parse import urlencode
 
-from pydantic import AliasPath, BaseModel, Field, model_validator
+from pydantic import AliasPath, BaseModel, Field, ValidationError, model_validator
 
 from health_compass.ingest.clinicaltrials import API
 
 DEFAULT_RADIUS_KM = 100
 MAX_RADIUS_KM = 10_000
+REGISTRY_UNAVAILABLE = "ClinicalTrials.gov search is temporarily unavailable."
+
+
+class RegistryUnavailable(Exception):
+    """A registry request failed. The error carries no query or location."""
 
 
 class Coordinates(BaseModel):
@@ -59,6 +66,11 @@ class RecruitingStudy(BaseModel):
     title: str = Field(
         validation_alias=AliasPath("protocolSection", "identificationModule", "briefTitle")
     )
+    summary: str | None = Field(
+        default=None,
+        validation_alias=AliasPath("protocolSection", "descriptionModule", "briefSummary"),
+        exclude=True,
+    )
     overall_status: Literal["RECRUITING"] = Field(
         validation_alias=AliasPath("protocolSection", "statusModule", "overallStatus")
     )
@@ -88,8 +100,11 @@ class RegistryResults(BaseModel):
 def fetch_page(params: dict[str, str]) -> RegistryPage:
     url = f"{API}/studies?{urlencode(params)}"
     # Keep the outgoing URL out of logs. The HTTPS host is fixed and all parameters are encoded.
-    with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310
-        return RegistryPage.model_validate_json(response.read())
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310
+            return RegistryPage.model_validate_json(response.read())
+    except (OSError, HTTPException, ValidationError):
+        raise RegistryUnavailable(REGISTRY_UNAVAILABLE) from None
 
 
 def recruiting_sites(study: RecruitingStudy, country: str | None) -> list[Site]:
@@ -126,7 +141,12 @@ def nearest_site(
     return best
 
 
-def search_registry(search: RegistrySearch) -> RegistryResults:
+def search_registry(
+    search: RegistrySearch,
+    *,
+    get_page: Callable[[dict[str, str]], RegistryPage] = fetch_page,
+    include_summary: bool = False,
+) -> RegistryResults:
     params = {
         "query.cond": search.condition,
         "filter.overallStatus": "RECRUITING",
@@ -137,6 +157,8 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
         ),
         "pageSize": "20",
     }
+    if include_summary:
+        params["fields"] += ",BriefSummary"
     if search.country:
         params["filter.advanced"] = (
             f'SEARCH[Location](AREA[LocationCountry]COVERAGE[FullMatch]"{search.country}"'
@@ -146,7 +168,7 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
     if origin is None:
         if search.page_token:
             params["pageToken"] = search.page_token
-        page = fetch_page(params)
+        page = get_page(params)
         for study in page.trials:
             study.recruiting_sites = recruiting_sites(study, search.country)
         return RegistryResults(
@@ -162,7 +184,7 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
     matches: list[tuple[float, RecruitingStudy]] = []
     seen_tokens: set[str] = set()
     while True:
-        page = fetch_page(params)
+        page = get_page(params)
         for study in page.trials:
             site = nearest_site(study, origin, search.country, search.radius_km)
             if site:
@@ -171,7 +193,7 @@ def search_registry(search: RegistrySearch) -> RegistryResults:
         if not page.next_page_token:
             break
         if page.next_page_token in seen_tokens:
-            raise OSError("ClinicalTrials.gov repeated a page token.")
+            raise RegistryUnavailable(REGISTRY_UNAVAILABLE)
         seen_tokens.add(page.next_page_token)
         params["pageToken"] = page.next_page_token
     matches.sort(key=lambda match: (match[0], match[1].nct_id))

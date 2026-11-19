@@ -14,7 +14,7 @@ from typing import Literal
 from dbos import DBOS
 from fastapi import FastAPI, HTTPException, Response
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from health_compass import approvals, registry_trials, research, trials
 from health_compass.agent import Answer, answer_question, expand_approval_search
@@ -52,15 +52,6 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/trials")
-def find_trials(search: trials.TrialSearch) -> trials.TrialResults:
-    """Recruiting trials from the latest warehouse build, nearest recruiting site first."""
-    try:
-        return trials.find_trials(search)
-    except trials.TablesNotBuiltError:
-        raise HTTPException(503, NOT_BUILT) from None
-
-
 @app.post("/trials/search")
 def search_recruiting_trials(
     search: registry_trials.RegistrySearch, response: Response
@@ -68,10 +59,10 @@ def search_recruiting_trials(
     """Recruiting studies from ClinicalTrials.gov with optional location filters."""
     try:
         results = registry_trials.search_registry(search)
-    except (OSError, ValidationError):
+    except registry_trials.RegistryUnavailable:
         raise HTTPException(
             502,
-            "ClinicalTrials.gov search is temporarily unavailable.",
+            registry_trials.REGISTRY_UNAVAILABLE,
             headers={"Cache-Control": "no-store"},
         ) from None
     response.headers["Cache-Control"] = "no-store"
@@ -147,6 +138,8 @@ def ask_result(run_id: str) -> Run:
         return Run(run_id=run_id, status="running", steps_done=done)
     if run.status == "SUCCESS":
         return Run(run_id=run_id, status="done", steps_done=done, answer=run.output)
+    if isinstance(run.error, registry_trials.RegistryUnavailable):
+        raise HTTPException(503, registry_trials.REGISTRY_UNAVAILABLE)
     if isinstance(run.error, trials.TablesNotBuiltError):
         raise HTTPException(503, NOT_BUILT)
     if isinstance(run.error, approvals.ApprovalTablesNotBuiltError):

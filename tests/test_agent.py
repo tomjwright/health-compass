@@ -1,18 +1,21 @@
+import json
 import re
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from dbos import DBOS
 from fastapi.testclient import TestClient
-from test_api import SINGAPORE, site, trial
-from test_transform import save_load
+from test_api import SINGAPORE
+from test_transform import FULL_STUDY, updated
 
-from health_compass import agent, transform
+from health_compass import agent
 from health_compass.agent import Draft, Intake, Note, Supervisor
 from health_compass.api import app, delete_old_runs
 from health_compass.judge import NoteVerdict, Verdicts
@@ -57,12 +60,28 @@ DOSING = Draft(summary="You should take 5 mg a day.", notes=[])
 
 
 @pytest.fixture(autouse=True)
-def tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "health_compass.duckdb"))
-    near = trial("NCT00000011", site("Singapore", 1.29, 103.85))
-    far = trial("NCT00000012", site("London", 51.51, -0.13))
-    save_load("2026-11-16", [near, far])
-    transform.build()
+def registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fetch(url: str, timeout: float) -> BytesIO:
+        params = parse_qs(urlsplit(url).query)
+        assert params["filter.overallStatus"] == ["RECRUITING"]
+        studies = []
+        if params["query.cond"] == ["alopecia"]:
+            for suffix, city, lat, lon in (
+                (11, "Singapore", 1.29, 103.85),
+                (12, "Johor Bahru", 1.46, 103.76),
+                (13, "Kuala Lumpur", 3.14, 101.69),
+            ):
+                study = updated(FULL_STUDY, "RECRUITING", "2026-06-15")
+                protocol = study["protocolSection"]
+                protocol["identificationModule"]["nctId"] = f"NCT{suffix:08d}"
+                protocol["descriptionModule"] = {"briefSummary": "A study of a hair treatment."}
+                protocol["contactsLocationsModule"]["locations"] = [
+                    {"city": city, "status": "RECRUITING", "geoPoint": {"lat": lat, "lon": lon}}
+                ]
+                studies.append(study)
+        return BytesIO(json.dumps({"studies": studies}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fetch)
 
 
 def ask(
@@ -75,15 +94,17 @@ def ask(
     return Supervisor(model, judge).ask(question, **SINGAPORE)
 
 
-def test_answers_with_facts_from_the_tables_and_notes_from_the_llm() -> None:
+def test_answers_with_facts_from_the_registry_and_notes_from_the_llm() -> None:
     model = FakeModel(SEARCH, GOOD)
     answer = ask(model)
     assert answer.outcome == "answered"
     assert answer.message == GOOD.summary
     assert [(t.nct_id, t.city, t.is_recruiting, t.note) for t in answer.trials] == [
         ("NCT00000011", "Singapore", True, "It studies a hair serum."),
-        ("NCT00000012", "London", True, "It studies a light treatment."),
+        ("NCT00000012", "Johor Bahru", True, "It studies a light treatment."),
     ]
+    assert "A study of a hair treatment." in model.prompts[-1]
+    assert "NCT00000011" not in model.prompts[-1]
     # The LLM never sees the location.
     assert not any("1.29" in prompt or "Singapore" in prompt for prompt in model.prompts)
 
@@ -128,6 +149,7 @@ def test_retries_when_the_judge_finds_a_note_its_record_does_not_support() -> No
     assert "the note on 2 says something its record doesn't" in model.prompts[-1]
     # The judge sees each trial's record and the note on it, never the location.
     assert "Title: " in judge.prompts[0] and "Note: It studies a hair serum." in judge.prompts[0]
+    assert "Summary: A study of a hair treatment." in judge.prompts[0]
     assert not any("Singapore" in prompt for prompt in judge.prompts)
 
 
@@ -189,16 +211,29 @@ def test_ask_endpoint_answers_and_keeps_the_answer_until_the_run_expires(
     body = collect(api, run_id).json()
     assert body["answer"]["outcome"] == "answered"
     assert body["steps_done"] == ["route", "find_trials", "write_answer", "check_output"]
+    nearby = api.post("/trials/search", json={"condition": "alopecia", "origin": SINGAPORE})
+    assert nearby.status_code == 200
+    assert (
+        [trial["nct_id"] for trial in body["answer"]["trials"]]
+        == [trial["nct_id"] for trial in nearby.json()["trials"]]
+        == ["NCT00000011", "NCT00000012"]
+    )
     # Reading the answer again (say, after a refresh) still works.
     assert api.get(f"/ask/{run_id}").json()["answer"]["outcome"] == "answered"
 
 
-def test_ask_says_when_the_tables_are_not_built(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, api: TestClient
+def test_ask_says_when_the_registry_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, api: TestClient
 ) -> None:
-    monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "missing.duckdb"))
+    def unavailable(url: str, timeout: float) -> BytesIO:
+        raise TimeoutError(url)
+
+    monkeypatch.setattr("urllib.request.urlopen", unavailable)
     monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH))
-    assert collect(api, start(api)).status_code == 503
+    response = collect(api, start(api))
+    # The Ask client treats 503 as a finished run, so the question can be resubmitted.
+    assert response.status_code == 503
+    assert response.json() == {"detail": "ClinicalTrials.gov search is temporarily unavailable."}
 
 
 def test_ask_requests_location_only_after_routing_a_trial_question(

@@ -1,5 +1,5 @@
 """The agent: one graph that answers "are there trials for X near me?" and "what's approved for
-X?" from the tables.
+X?" from the live trial registry and the approval tables.
 
           ┌─► find_trials ────┐
     route ┤                   ├─► write_answer ──► check_output ──► answered
@@ -14,7 +14,7 @@ checks one note per record with the shared `write_answer` and `check_output` ste
 sets only its search, prompts and how a record is shown.
 
 The LLM only sorts the question and writes one note per record. Python decides what is refused
-and what is shown, and every fact shown (status, site, distance) comes from the tables.
+and what is shown, and every fact shown comes from regulator or registry records.
 The question goes to the LLM; the location never does, and neither is logged or traced.
 Approvals are from the US and the EU only, so every answer that lists them ends with
 LOCAL_APPROVAL.
@@ -38,7 +38,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, Field
 
-from health_compass import research
+from health_compass import registry_trials, research
 from health_compass.approvals import (
     Approval,
     ApprovalSearch,
@@ -47,7 +47,7 @@ from health_compass.approvals import (
     indications_shown,
 )
 from health_compass.judge import unsupported_notes
-from health_compass.trials import TablesNotBuiltError, Trial, TrialSearch, find_trials
+from health_compass.trials import Trial
 
 log = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -202,7 +202,7 @@ def expand_approval_search(search: ApprovalSearch) -> ApprovalSearch:
 
 
 class Note(BaseModel):
-    number: int
+    number: int = Field(description="The record's position in the numbered list, starting at 1.")
     note: str = Field(description="One sentence on what the record is about.")
 
 
@@ -421,6 +421,15 @@ class TrialAgent(RecordAgent):
     answered = AnsweredTrial
     results_only = TRIALS_ONLY
 
+    def __init__(
+        self,
+        model: BaseChatModel,
+        judge: BaseChatModel,
+        get_page: Callable[[dict[str, str]], registry_trials.RegistryPage],
+    ) -> None:
+        super().__init__(model, judge)
+        self.get_page = get_page
+
     @DBOS.step()
     def find_trials(self, state: State) -> State:
         latitude = state.get("latitude")
@@ -433,27 +442,47 @@ class TrialAgent(RecordAgent):
                 )
             }
         with tracer.start_as_current_span("agent.find_trials") as span:
-            search = TrialSearch(
+            search = registry_trials.RegistrySearch(
                 condition=state["condition"],
-                latitude=latitude,
-                longitude=longitude,
-                limit=MAX_TRIALS,
+                origin=registry_trials.Coordinates(latitude=latitude, longitude=longitude),
             )
-            trials = find_trials(search).trials
+            results = registry_trials.search_registry(
+                search, get_page=self.get_page, include_summary=True
+            )
+            trials = []
+            for study in results.trials[:MAX_TRIALS]:
+                site = study.nearest_site
+                if site is not None:
+                    trials.append(
+                        Trial(
+                            nct_id=study.nct_id,
+                            title=study.title,
+                            summary=study.summary,
+                            overall_status=study.overall_status,
+                            is_recruiting=True,
+                            facility=site.facility,
+                            city=site.city,
+                            country=site.country,
+                            site_status="RECRUITING",
+                            distance_km=round(site.distance_km, 1),
+                        )
+                    )
             span.set_attribute("agent.trials_found", len(trials))
         if trials:
             return {"records": trials}
-        message = f"I found no recruiting trials for {state['condition']} in the trial data."
+        message = (
+            f"I found no recruiting trials for {search.condition} within {search.radius_km} km."
+        )
         return {"answer": Answer(outcome="no_trials", message=message)}
 
     find = find_trials
 
-    def shown_to_writer(self, trial: Trial) -> str:
-        # The LLM sees each trial's ID, title and status: not its site or distance.
-        return f"{trial.nct_id}: {trial.title} ({trial.overall_status})"
-
     def shown_to_judge(self, trial: Trial) -> str:
         return f"Title: {trial.title}\nSummary: {trial.summary or 'none given'}"
+
+    def shown_to_writer(self, trial: Trial) -> str:
+        # Both models use the same evidence and the numbered list supplies the references.
+        return self.shown_to_judge(trial)
 
     def id_of(self, trial: Trial) -> str:
         return trial.nct_id
@@ -612,10 +641,14 @@ class Supervisor:
         find_papers: Callable[[research.PaperSearch], research.PaperResults] = (
             research.find_papers
         ),
+        *,
+        get_trial_page: Callable[[dict[str, str]], registry_trials.RegistryPage] = (
+            registry_trials.fetch_page
+        ),
     ) -> None:
         self.model = model
         agents: list[RecordAgent] = [
-            TrialAgent(model, judge),
+            TrialAgent(model, judge, get_trial_page),
             ApprovalAgent(model, judge),
             ResearchAgent(model, judge, find_papers),
         ]
@@ -637,7 +670,7 @@ class Supervisor:
                 state = self.graph.invoke(
                     {"question": question, "latitude": latitude, "longitude": longitude}
                 )
-            except (TablesNotBuiltError, ApprovalTablesNotBuiltError):
+            except (registry_trials.RegistryUnavailable, ApprovalTablesNotBuiltError):
                 raise
             except Exception as error:
                 # LLM errors can quote the model's output, which can repeat the question, so
@@ -657,12 +690,13 @@ class Supervisor:
         ) as span:
             intake = read_intake(self.model, state["question"])
             span.set_attribute("agent.kind", intake.kind)
+        condition = (intake.condition or "").strip()[:100].rstrip()
         for agent in self.agents.values():
-            if intake.kind == agent.kind and intake.condition:
+            if intake.kind == agent.kind and len(condition) >= 2:
                 terms = [term.strip()[:100] for term in intake.terms if len(term.strip()) >= 2]
                 return {
                     "agent": agent.name,
-                    "condition": intake.condition[:100],
+                    "condition": condition,
                     "terms": terms[:3],
                 }
         kind = "other" if intake.kind not in REFUSALS else intake.kind
