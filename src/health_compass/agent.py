@@ -203,7 +203,13 @@ class AnsweredPaper(MedicinePaper):
 
 class Answer(BaseModel):
     outcome: Literal[
-        "answered", "refused", "no_trials", "trials_only", "no_approvals", "approvals_only"
+        "answered",
+        "refused",
+        "no_trials",
+        "trials_only",
+        "no_approvals",
+        "approvals_only",
+        "location_required",
     ]
     message: str
     trials: list[AnsweredTrial] = []
@@ -213,8 +219,8 @@ class Answer(BaseModel):
 
 class State(TypedDict, total=False):
     question: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
     agent: str
     condition: str
     terms: list[str]
@@ -391,11 +397,20 @@ class TrialAgent(RecordAgent):
 
     @DBOS.step()
     def find_trials(self, state: State) -> State:
+        latitude = state.get("latitude")
+        longitude = state.get("longitude")
+        if latitude is None or longitude is None:
+            return {
+                "answer": Answer(
+                    outcome="location_required",
+                    message="Choose a city or use your current location to find trials near you.",
+                )
+            }
         with tracer.start_as_current_span("agent.find_trials") as span:
             search = TrialSearch(
                 condition=state["condition"],
-                latitude=state["latitude"],
-                longitude=state["longitude"],
+                latitude=latitude,
+                longitude=longitude,
                 limit=MAX_TRIALS,
             )
             trials = find_trials(search).trials
@@ -588,7 +603,7 @@ class Supervisor:
         graph.add_conditional_edges("route", after_route)
         self.graph = graph.compile()
 
-    def ask(self, question: str, latitude: float, longitude: float) -> Answer:
+    def ask(self, question: str, latitude: float | None, longitude: float | None) -> Answer:
         with tracer.start_as_current_span(
             "agent.ask", record_exception=False, set_status_on_exception=False
         ) as span:
@@ -632,7 +647,7 @@ class Supervisor:
 
 
 @DBOS.workflow()
-def answer_question(question: str, latitude: float, longitude: float) -> Answer:
+def answer_question(question: str, latitude: float | None, longitude: float | None) -> Answer:
     """`Supervisor.ask` as a durable run. DBOS saves the question, location and each step's result
     until `api.py` deletes the run, after RUN_TTL_MINUTES (60 by default).
     """

@@ -1,0 +1,12 @@
+.page { max-width: 760px; }
+.fields { display: grid; gap: 16px; margin: 0; padding: 20px; border: 0; min-width: 0; }
+.fields textarea { width: 100%; padding: 10px 12px; border: 1px solid #bccfd1; border-radius: 8px; font: inherit; color: inherit; resize: vertical; }
+.fields summary { cursor: pointer; color: #075e60; }
+.fields button { justify-self: start; }
+.fields p { margin: 0; }
+.location { display: grid; gap: 8px; margin: 12px 0 0; }
+.answer { margin-top: 18px; padding: 20px; background: white; border: 1px solid #d7e3e4; border-radius: 16px; }
+.message { white-space: pre-wrap; }
+.sources { padding-inline-start: 32px; }
+.sources h3 { margin-block: 8px; font-size: 1rem; }
+.sources p { margin-block: 4px 12px; }

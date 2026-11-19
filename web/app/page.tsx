@@ -2,6 +2,7 @@
 
 import { all } from "iso-3166-1";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Coordinates, TrialSelection, TrialSite } from "./trial-map";
 import { mappedSite, TrialResult, type Trial } from "./trial-results";
@@ -334,7 +335,9 @@ export default function FindTrials() {
       <header><span className="brand-mark" aria-hidden="true">✦</span> Health Compass</header>
       <main>
         <h1>Find clinical trials</h1>
-        <p className="intro">Explore recruiting studies near you or search worldwide.</p>
+        <p className="intro">
+          Explore recruiting studies near you or search worldwide. <Link href="/ask">Ask Health Compass</Link>
+        </p>
         <form onSubmit={submit} autoComplete="off" className="condition-search">
           <label>Condition
             <input value={condition} maxLength={100} placeholder="e.g. Alopecia"

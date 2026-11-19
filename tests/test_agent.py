@@ -201,6 +201,18 @@ def test_ask_says_when_the_tables_are_not_built(
     assert collect(api, start(api)).status_code == 503
 
 
+def test_ask_requests_location_only_after_routing_a_trial_question(
+    monkeypatch: pytest.MonkeyPatch, api: TestClient
+) -> None:
+    monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH))
+    started = api.post("/ask", json={"question": "Hair loss trials?"})
+    assert started.status_code == 202
+    answer = collect(api, started.json()["run_id"]).json()["answer"]
+    assert answer["outcome"] == "location_required"
+    partial = api.post("/ask", json={"question": "Hair loss trials?", "latitude": 0})
+    assert partial.status_code == 422
+
+
 def test_runs_are_deleted_after_an_hour(monkeypatch: pytest.MonkeyPatch, api: TestClient) -> None:
     monkeypatch.setattr("health_compass.agent.chat_model", lambda: FakeModel(SEARCH, GOOD))
     run_id = start(api)
