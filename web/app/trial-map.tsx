@@ -1,6 +1,6 @@
 "use client";
 
-import { circle, circleMarker, control, latLngBounds, map, tileLayer, type CircleMarker, type LatLngTuple, type Map as LeafletMap } from "leaflet";
+import { circle, circleMarker, control, latLngBounds, layerGroup, map, tileLayer, type CircleMarker, type LatLngTuple, type LayerGroup, type Map as LeafletMap } from "leaflet";
 import { useEffect, useRef } from "react";
 
 export type Coordinates = {
@@ -30,38 +30,52 @@ export default function TrialMap({ sites, origin, selection, radiusKm }: {
   radiusKm: number | null;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const mapState = useRef<{ view: LeafletMap; markers: Map<string, CircleMarker> } | null>(null);
+  const mapState = useRef<{ view: LeafletMap; layers: LayerGroup; markers: Map<string, CircleMarker> } | null>(null);
 
   useEffect(() => {
     if (!container.current) return;
-    const center: LatLngTuple | null = origin ? [origin.latitude, origin.longitude] : null;
     const view = map(container.current, { scrollWheelZoom: false });
     view.on("focus", () => { view.scrollWheelZoom.enable(); });
     view.on("blur", () => { view.scrollWheelZoom.disable(); });
-    view.setView(center ?? [20, 8], center ? maxFocusZoom : 2);
+    view.setView([20, 8], 2);
     control.scale({ imperial: false }).addTo(view);
     tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
     }).addTo(view);
+    const resize = new ResizeObserver(() => view.invalidateSize({ debounceMoveend: true }));
+    resize.observe(container.current);
+    mapState.current = { view, layers: layerGroup().addTo(view), markers: new Map() };
+    return () => {
+      resize.disconnect();
+      mapState.current = null;
+      view.remove();
+    };
+  }, []);
 
+  useEffect(() => {
+    const state = mapState.current;
+    if (!state) return;
+    const { view, layers, markers } = state;
+    layers.clearLayers();
+    markers.clear();
+    const center: LatLngTuple | null = origin ? [origin.latitude, origin.longitude] : null;
     const bounds = latLngBounds(center ? [center] : []);
     if (center) {
       circleMarker(center, { radius: 12, color: "#1d4ed8", fillColor: "#dbeafe", fillOpacity: 1 })
-        .addTo(view).bindTooltip(radiusKm != null ? "Search location" : "Your location");
+        .addTo(layers).bindTooltip(radiusKm != null ? "Search location" : "Distance reference");
     }
     if (center && radiusKm != null) {
       const cutoff = circle(center, {
         radius: radiusKm * 1000, color: "#1d4ed8", weight: 2, dashArray: "4 6",
         fillOpacity: 0.05, interactive: false,
-      }).addTo(view);
+      }).addTo(layers);
       if (radiusKm > 100 || sites.length === 0) bounds.extend(cutoff.getBounds());
     }
     const focusNearby = radiusKm != null && radiusKm <= 100;
     const nearest = [...sites].sort((left, right) => (left.distance_km ?? Infinity) - (right.distance_km ?? Infinity));
     const nearby = nearest.filter((site) => (site.distance_km ?? Infinity) <= localRadiusKm).slice(0, maxFocusSites);
     const focusSites = new Set(nearby.length ? nearby : nearest.slice(0, 1));
-    const markers = new Map<string, CircleMarker>();
     const referenceLongitude = center?.[1] ?? sites[0]?.longitude ?? 0;
     for (const site of sites) {
       const worldOffset = Math.round((referenceLongitude - site.longitude) / 360) * 360;
@@ -69,16 +83,11 @@ export default function TrialMap({ sites, origin, selection, radiusKm }: {
       const label = document.createElement("span");
       label.textContent = [...new Set([site.facility, site.city, site.country].filter(Boolean))].join(", ") || site.nct_id;
       const marker = circleMarker(point, { radius: 8, color: "#fff", fillColor: "#08705b", fillOpacity: 1 })
-        .addTo(view).bindTooltip(label);
+        .addTo(layers).bindTooltip(label);
       markers.set(site.nct_id, marker);
       if (!focusNearby || focusSites.has(site)) bounds.extend(point);
     }
     if (bounds.isValid()) view.fitBounds(bounds, { padding: [28, 28], maxZoom: maxFocusZoom, animate: false });
-    mapState.current = { view, markers };
-    return () => {
-      mapState.current = null;
-      view.remove();
-    };
   }, [sites, origin, radiusKm]);
 
   useEffect(() => {

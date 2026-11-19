@@ -29,16 +29,14 @@ main { width: min(1200px, 90%); margin: 44px auto 0; }
 h1 { font-size: clamp(2.35rem, 5vw, 3.8rem); line-height: 1.05; letter-spacing: -.05em; margin: 0; }
 .intro { color: #4b616a; margin: 12px 0 25px; font-size: 1.08rem; }
 form, .explorer { background: white; border: 1px solid #d7e3e4; border-radius: 16px; }
-form { padding: 20px; margin-bottom: 22px; }
-fieldset {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  min-width: 0;
+.condition-search {
+  padding: 16px 20px;
+  margin-bottom: 22px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  grid-template-columns: minmax(0, 36rem) auto;
   align-items: end;
   gap: 12px;
+  justify-content: start;
 }
 label { display: grid; gap: 7px; min-width: 0; font-size: .875rem; font-weight: 700; }
 input, select, button { font: inherit; min-height: 44px; border: 1px solid #bccfd1; border-radius: 8px; }
@@ -48,17 +46,13 @@ button:disabled { opacity: .65; cursor: wait; }
 .secondary { background: #edf5f4; color: #124f53; }
 :focus-visible { outline: 3px solid #338783; outline-offset: 3px; }
 a { color: #075e60; }
-.locate-button { grid-area: 1 / 4; }
-.search-button { grid-area: 1 / 5; }
-.radius-field { grid-column: 1 / -1; display: flex; gap: 12px; align-items: end; }
-.radius-field input { max-width: 140px; }
-.radius-field span { padding-bottom: 12px; color: #4b616a; font-size: .8rem; }
-.city-options { grid-area: 2 / 1 / auto / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.city-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .city-options p { margin: 0; flex-basis: 100%; }
 .city-options a, .freshness, footer { color: #4b616a; font-size: .8rem; }
 .explorer { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); overflow: hidden; }
 .results-heading {
   grid-column: 1 / -1;
+  border-bottom: 1px solid #d7e3e4;
   padding: 16px 20px;
   display: flex;
   flex-wrap: wrap;
@@ -66,17 +60,18 @@ a { color: #075e60; }
   justify-content: space-between;
   gap: 8px 20px;
 }
-.explorer:has(.results) .results-heading { border-bottom: 1px solid #d7e3e4; }
 .results-heading .result-status { margin-bottom: 0; }
-.result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.results { grid-column: 1; grid-row: 2; padding: 20px; max-height: 540px; overflow: auto; overflow-wrap: anywhere; }
-.list-only { display: block; }
-.list-only .results { max-height: none; }
+.search-modes { display: inline-flex; padding: 3px; gap: 3px; border: 1px solid #d7e3e4; border-radius: 11px; background: #edf5f4; }
+.search-modes button { border-color: transparent; min-height: 38px; color: #124f53; background: transparent; }
+.search-modes button[aria-pressed="true"] { background: #124f53; color: #fff; }
+.results { grid-column: 1; grid-row: 2; padding: 20px; max-height: 660px; overflow: auto; overflow-wrap: anywhere; }
+.results > button:first-child { margin-bottom: 12px; }
 h2 { margin: 0; font-size: 1.2rem; }
 .result-status, .error { margin: 8px 0; font-size: .93rem; }
 .result-status:empty { display: none; }
 .error { color: #a12726; }
-.results-error { flex-basis: 100%; margin: 0; }
+.results-error { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; flex-basis: 100%; }
+.results-error .error { margin: 0; }
 .trial-list { list-style: none; padding: 0; margin: 0; }
 .trial-list > li { padding: 16px 0; border-top: 1px solid #d7e3e4; }
 .trial-list h3 { margin: 7px 0; font-size: 1rem; }
@@ -96,10 +91,18 @@ h2 { margin: 0; font-size: 1.2rem; }
 .distance-track span { display: block; height: 100%; background: #12806e; }
 .badge { display: inline-block; padding: 3px 8px; background: #edf2f8; color: #384f6c; border-radius: 6px; font-size: .76rem; font-weight: 700; }
 .badge.recruiting { background: #e0f2ea; color: #08705b; }
-.map-panel { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-width: 0; }
-.explorer:not(:has(.results)) .map-panel { grid-column: 1 / -1; }
-.trial-map { flex: 1; min-height: 490px; background: #e1edef; }
-.map-key { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; color: #4b616a; font-size: .8rem; }
+.map-panel { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-width: 0; border-left: 1px solid #d7e3e4; }
+.map-controls { display: grid; gap: 13px; padding: 16px; background: #f7fbfb; border-bottom: 1px solid #d7e3e4; }
+.locality-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.locality-heading h3 { margin: 0; font-size: 1rem; }
+.locality-heading p { margin: 3px 0 0; color: #4b616a; font-size: .85rem; }
+.city-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px; }
+.radius-control { display: grid; align-items: center; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; }
+.radius-control input[type="range"] { padding: 0; accent-color: #124f53; }
+.radius-number { display: flex; align-items: center; gap: 6px; color: #4b616a; font-size: .85rem; }
+.radius-number input { width: 77px; padding: 0 6px 0 9px; }
+.trial-map { flex: 1; min-height: 410px; background: #e1edef; }
+.map-key { display: flex; flex-wrap: wrap; min-height: 37px; gap: 6px 16px; padding: 10px 16px; color: #4b616a; font-size: .8rem; }
 .map-key span { display: inline-flex; gap: 6px; align-items: center; }
 .map-key i { width: 10px; height: 10px; border-radius: 50%; background: #08705b; }
 .map-key .origin-marker { border: 2px solid #1d4ed8; background: #dbeafe; }
@@ -108,12 +111,8 @@ footer { padding: 16px 0 24px; }
 
 @media (max-width: 760px) {
   main { margin-top: 30px; }
-  fieldset { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .locate-button, .search-button { grid-area: auto; }
-  label, .city-options { grid-area: auto / 1 / auto / -1; }
   .explorer { grid-template-columns: minmax(0, 1fr); }
-  .map-panel { grid-column: 1; border-bottom: 1px solid #d7e3e4; }
+  .map-panel { grid-column: 1; border-left: 0; border-bottom: 1px solid #d7e3e4; }
   .trial-map { min-height: 280px; }
-  .map-panel + .results { grid-row: 3; }
-  .results { max-height: none; }
+  .results { grid-row: 3; max-height: none; }
 }
