@@ -1,0 +1,13 @@
+.git
+.venv
+**/__pycache__
+.env
+data
+mutants
+web
+tests
+evals
+transform/dbt_packages
+transform/target
+transform/logs
+.dlt/secrets.toml
