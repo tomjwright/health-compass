@@ -29,6 +29,22 @@ jobs:
       - run: npm ci && npm run lint && npm run build
         working-directory: web
 
+  # Mutation testing: mutmut changes registry_trials.py one small edit at a time and fails CI
+  # when the tests notice fewer than the floor's share of those edits.
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+      - run: uv sync --frozen
+      - name: Mutate registry_trials.py and run its tests on each mutant
+        run: uv run mutmut run --max-children 4
+      - name: Fail below 84% killed in any mutated file
+        run: uv run mutmut results --all true | python3 scripts/mutation_floor.py 84
+
   # The code must run on any machine: these catch paths and file handling that only work on Linux.
   test-other-os:
     strategy:

@@ -27,6 +27,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx2>=0.1",
+    "mutmut==3.8.1",
     "mypy>=1.11",
     "pip-audit>=2.7",
     "pre-commit>=3.8",
@@ -58,3 +59,8 @@ files = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+
+[tool.mutmut]
+source_paths = ["src/health_compass/registry_trials.py"]
+pytest_add_cli_args_test_selection = ["tests/test_registry_trials.py", "tests/test_api.py"]
+also_copy = ["src/health_compass/", "transform/", "tests/"]

@@ -20,6 +20,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                               # strict, src/ only
 uv run pytest
 uv run pre-commit run --all-files
+rm -rf mutants && uv run mutmut run --max-children 4 && uv run mutmut results --all true | python3 scripts/mutation_floor.py 84   # fresh run: mutmut keeps old scores when only tests change
 npm --prefix web ci                       # when the frontend changed
 npm --prefix web run lint && npm --prefix web run build
 ```
