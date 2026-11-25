@@ -20,6 +20,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                               # strict, src/ only
 uv run pytest
 uv run pre-commit run --all-files
+uvx --python 3.12 semgrep@1.187.0 scan --metrics=off --error --config p/python --config p/typescript --config p/react --config p/github-actions src web/app .github
 npm --prefix web ci                       # when the frontend changed
 npm --prefix web run lint && npm --prefix web run build
 ```
