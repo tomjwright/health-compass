@@ -22,6 +22,7 @@ uv run pytest
 uv run pre-commit run --all-files
 npm --prefix web ci                       # when the frontend changed
 npm --prefix web run lint && npm --prefix web run build
+actionlint && zizmor --offline .github/workflows
 ```
 
 ## Commands

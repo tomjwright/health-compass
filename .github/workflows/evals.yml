@@ -16,21 +16,24 @@ jobs:
   evals:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Skip when only text files changed
         id: changes
         if: github.event_name == 'pull_request'
         # --no-renames lists a renamed file's old path too; quotePath=false keeps accented names
         # unquoted, so the suffix check sees them as they are.
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          changed=$(git -c core.quotePath=false diff --name-only --no-renames "origin/${{ github.base_ref }}...HEAD")
+          changed=$(git -c core.quotePath=false diff --name-only --no-renames "origin/${BASE_REF}...HEAD")
           if ! echo "$changed" | grep -qvE '\.(md|txt|rst)$'; then
             echo "Only text files changed, so no LLM calls are needed."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         if: steps.changes.outputs.skip != 'true'
       - run: uv sync --frozen
         if: steps.changes.outputs.skip != 'true'
@@ -44,7 +47,7 @@ jobs:
           uv run python -m health_compass.evals
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && steps.changes.outputs.skip != 'true'
         with:
           name: eval-results
