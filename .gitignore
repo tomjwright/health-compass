@@ -17,3 +17,4 @@ transform/target/
 transform/logs/
 transform/.user.yml
 transform/dbt_packages/
+.coverage
