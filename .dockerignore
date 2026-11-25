@@ -10,3 +10,4 @@ evals
 transform/dbt_packages
 transform/target
 transform/logs
+.dlt/secrets.toml

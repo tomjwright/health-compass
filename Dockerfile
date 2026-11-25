@@ -11,6 +11,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY README.md ./
 COPY src ./src
 COPY transform ./transform
+# dlt reads its memory and staged-replace settings from .dlt/config.toml in the working directory.
+COPY .dlt/config.toml ./.dlt/config.toml
 RUN uv sync --frozen --no-dev && python -m dbt.cli.main deps --project-dir=transform
 
 RUN useradd --uid 10001 --no-create-home app && mkdir data && chown app data transform
