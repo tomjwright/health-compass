@@ -21,12 +21,27 @@ jobs:
       - run: uv run pytest
       - name: Audit dependencies for known vulnerabilities
         run: uv export --frozen --no-hashes --no-emit-project | uv run pip-audit --strict -r /dev/stdin
+      # Allow-list, not deny-list, so a new licence wording fails instead of slipping through.
+      # text-unidecode (via dbt's python-slugify) is "Artistic License or GPLv2+"; we take Artistic.
+      - name: Fail on any locked Python package outside the licence allow-list
+        run: >-
+          uv run pip-licenses --from=mixed --partial-match --ignore-packages text-unidecode
+          --allow-only "MIT;BSD;Apache;ISC;PSF;Python Software Foundation;MPL-2.0;Mozilla Public License 2.0;LGPL;GNU Lesser General Public License;Unlicense"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci && npm run lint && npm run build
+        working-directory: web
+      - name: Audit frontend dependencies for known vulnerabilities
+        run: npm audit --audit-level=moderate
+        working-directory: web
+      # LGPL-3.0-or-later is sharp's prebuilt libvips, OFL-1.1 is a bundled font.
+      - name: Fail on any production frontend package outside the licence allow-list
+        run: >-
+          npx --yes license-checker-rseidelsohn@4.4.2 --production --excludePrivatePackages --summary
+          --onlyAllow "MIT;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0;0BSD;BlueOak-1.0.0;CC0-1.0;CC-BY-4.0;MPL-2.0;LGPL-3.0-or-later;OFL-1.1"
         working-directory: web
 
   # The code must run on any machine: these catch paths and file handling that only work on Linux.

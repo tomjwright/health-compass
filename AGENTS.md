@@ -20,8 +20,10 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                               # strict, src/ only
 uv run pytest
 uv run pre-commit run --all-files
+uv run pip-licenses --from=mixed --partial-match --ignore-packages text-unidecode --allow-only "MIT;BSD;Apache;ISC;PSF;Python Software Foundation;MPL-2.0;Mozilla Public License 2.0;LGPL;GNU Lesser General Public License;Unlicense"
 npm --prefix web ci                       # when the frontend changed
 npm --prefix web run lint && npm --prefix web run build
+(cd web && npm audit --audit-level=moderate && npx --yes license-checker-rseidelsohn@4.4.2 --production --excludePrivatePackages --summary --onlyAllow "MIT;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0;0BSD;BlueOak-1.0.0;CC0-1.0;CC-BY-4.0;MPL-2.0;LGPL-3.0-or-later;OFL-1.1")
 ```
 
 ## Commands
