@@ -18,7 +18,7 @@ secrets) live in his home repo, `tomjwright/home`. Rules for this repo:
 uv sync
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                               # strict, src/ only
-uv run pytest
+uv run pytest --cov    # fails below the coverage floor (statements and branches combined) in pyproject.toml
 uv run pre-commit run --all-files
 npm --prefix web ci                       # when the frontend changed
 npm --prefix web run lint && npm --prefix web run build
