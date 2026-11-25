@@ -1,0 +1,71 @@
+name: image
+
+# Builds the API image and starts it on every PR. After CI passes on main, it builds and
+# smoke-tests the image again, then pushes that exact image to GHCR, tagged with the commit SHA.
+# Deploy by pulling ghcr.io/<owner>/health-compass-api:<sha>, so what runs is what was tested.
+on:
+  pull_request:
+  workflow_run: # zizmor: ignore[dangerous-triggers] only a push to this repository's main publishes (if: below)
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'pull_request'
+      || (github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.head_branch == 'main'
+      && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      id-token: write # sign the build provenance
+      attestations: write
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15
+    env:
+      COMMIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.COMMIT_SHA }}
+          persist-credentials: false
+      - name: Build the image
+        run: docker build -t "health-compass-api:${COMMIT_SHA}" .
+      - name: Start the image and fail unless /health answers
+        run: >-
+          scripts/image_smoke.sh "health-compass-api:${COMMIT_SHA}"
+          postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      - name: Push the tested image to GHCR
+        id: push
+        if: github.event_name == 'workflow_run'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${REPOSITORY,,}-api"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "health-compass-api:${COMMIT_SHA}" "${image}:${COMMIT_SHA}"
+          docker push "${image}:${COMMIT_SHA}"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "${image}:${COMMIT_SHA}")
+          echo "name=${image}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
+      # Private repos need GitHub Enterprise Cloud for artifact attestations. Set the repository
+      # variable ATTESTATIONS_ENABLED=true where it is available (or the repo is public).
+      - name: Sign build provenance for the pushed image
+        if: github.event_name == 'workflow_run' && vars.ATTESTATIONS_ENABLED == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

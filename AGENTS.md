@@ -22,6 +22,7 @@ uv run pytest
 uv run pre-commit run --all-files
 npm --prefix web ci                       # when the frontend changed
 npm --prefix web run lint && npm --prefix web run build
+docker build -t health-compass-api . && scripts/image_smoke.sh health-compass-api postgresql://postgres:postgres@127.0.0.1:5432/health_compass   # when Dockerfile, deps or startup changed
 ```
 
 ## Commands
@@ -38,6 +39,12 @@ uv run --env-file .env python -m health_compass.transform --full-refresh   # rep
 ## Architecture in one line
 ClinicalTrials.gov, openFDA, EMA → dlt → `data/raw.duckdb` → dbt (DuckDB) → marts → LangGraph agents →
 FastAPI → Next.js. Logs are JSON with trace IDs; traces go to the OTLP endpoint in `.env`.
+
+## Delivery
+Every merge to `main` that passes CI publishes `ghcr.io/tomjwright/health-compass-api:<commit sha>`
+(`.github/workflows/image.yml`): the image is built, started against Postgres and pushed only if
+`/health` answers. The same image runs ingestion and the transform as one-off commands. No host
+deploys it yet.
 
 ## Gotchas
 - Models that read `raw.duckdb` must be tables: a view would point at `raw_data`, which readers
