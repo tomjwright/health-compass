@@ -9,6 +9,12 @@ docker run -d --name api-smoke --network host -e DATABASE_URL="$database_url" "$
 trap 'docker rm -f api-smoke >/dev/null' EXIT
 
 for _ in $(seq 1 60); do
+  # A container that exited (e.g. port 8000 already taken) must not pass on another server's answer.
+  if [ "$(docker inspect --format '{{.State.Running}}' api-smoke)" != "true" ]; then
+    echo "The container exited. Container logs:"
+    docker logs api-smoke
+    exit 1
+  fi
   if curl -sf http://127.0.0.1:8000/health; then
     echo
     echo "The image started and /health answered."
