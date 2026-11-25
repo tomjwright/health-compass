@@ -25,7 +25,7 @@ jobs:
       # text-unidecode (via dbt's python-slugify) is "Artistic License or GPLv2+"; we take Artistic.
       - name: Fail on any locked Python package outside the licence allow-list
         run: >-
-          uv run pip-licenses --from=mixed --partial-match --ignore-packages text-unidecode
+          uv run pip-licenses --from=mixed --partial-match --with-system --ignore-packages text-unidecode
           --allow-only "MIT;BSD;Apache;ISC;PSF;Python Software Foundation;MPL-2.0;Mozilla Public License 2.0;LGPL;GNU Lesser General Public License;Unlicense"
       - uses: actions/setup-node@v4
         with:
