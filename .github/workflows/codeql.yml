@@ -19,6 +19,7 @@ jobs:
     if: vars.CODEQL_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
+      actions: read # private repos: CodeQL reads the workflow run to upload results
       contents: read
       security-events: write # upload CodeQL results to the Security tab
     strategy:
